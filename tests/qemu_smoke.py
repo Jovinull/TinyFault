@@ -11,7 +11,12 @@ import threading
 import time
 
 
-def boot(qemu: Path, flash: Path) -> str:
+def boot(
+    qemu: Path,
+    flash: Path,
+    ready: bytes = b"Boot event stored. Reset to see it recovered.",
+    software_reset: bool = False,
+) -> str:
     command = [
         str(qemu),
         "-nographic",
@@ -40,6 +45,7 @@ def boot(qemu: Path, flash: Path) -> str:
     threading.Thread(target=read_output, daemon=True).start()
     captured = bytearray()
     deadline = time.monotonic() + 30.0
+    reset_sent = False
     try:
         while time.monotonic() < deadline:
             if process.poll() is not None and lines.empty():
@@ -49,14 +55,19 @@ def boot(qemu: Path, flash: Path) -> str:
             except queue.Empty:
                 continue
             captured.extend(line)
-            if b"Boot event stored. Reset to see it recovered." in captured:
+            if software_reset and not reset_sent and ready in captured:
+                assert process.stdin is not None
+                process.stdin.write(b"r")
+                process.stdin.flush()
+                reset_sent = True
+            if captured.count(ready) >= (2 if software_reset else 1):
                 break
         else:
             raise RuntimeError(
                 "QEMU boot timed out:\n" + captured.decode("utf-8", errors="replace")[-3000:]
             )
         output = captured.decode("utf-8", errors="replace")
-        if "Boot event stored. Reset to see it recovered." not in output:
+        if output.count(ready.decode("ascii")) < (2 if software_reset else 1):
             raise RuntimeError(f"Sketch did not finish setup:\n{output}")
         return output
     finally:
