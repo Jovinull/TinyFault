@@ -54,6 +54,17 @@ class DecodeTests(unittest.TestCase):
             with self.assertRaises(ExportError):
                 parse([text])
 
+    def test_mutated_valid_frames_are_rejected(self):
+        rng = random.Random(44)
+        for _ in range(100):
+            sequence = rng.randrange(1, 0xFFFFFFFF)
+            value = rng.randrange(0, 1000000)
+            original = frame([(sequence, 42, value, 123)])
+            self.assertEqual(parse(original.splitlines())[0]["value"], value)
+            mutated = original.replace(f"value={value} ", f"value={value + 1} ")
+            with self.assertRaises(ExportError):
+                parse(mutated.splitlines())
+
     def test_cpp_export_and_cli(self):
         if FIXTURE_BINARY is None:
             self.skipTest("C++ fixture binary was not supplied")
