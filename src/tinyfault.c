@@ -68,9 +68,12 @@ static void append(tf_recorder *recorder, const tf_event *event) {
 
 tf_status tf_recorder_init(tf_recorder *recorder, tf_event *buffer, size_t capacity,
                            const tf_storage *storage) {
-    if (!recorder || !buffer || capacity == 0u || capacity > UINT32_MAX ||
-        (storage && (!storage->read || !storage->write)))
+    if (!recorder || !buffer || capacity == 0u || (storage && (!storage->read || !storage->write)))
         return TF_INVALID_ARGUMENT;
+#if SIZE_MAX > UINT32_MAX
+    if (capacity > UINT32_MAX)
+        return TF_INVALID_ARGUMENT;
+#endif
     memset(recorder, 0, sizeof(*recorder));
     recorder->events = buffer;
     recorder->capacity = capacity;

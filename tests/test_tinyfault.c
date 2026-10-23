@@ -1,18 +1,18 @@
 #include "tf_core.h"
 
-#include <stdlib.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define CAP 4u
 
 /* Keep test operations and checks active when NDEBUG is defined. */
-#define CHECK(expression)                                                                    \
-    do {                                                                                     \
-        if (!(expression)) {                                                                 \
-            fprintf(stderr, "CHECK failed at %s:%d: %s\n", __FILE__, __LINE__, #expression); \
-            abort();                                                                         \
-        }                                                                                    \
+#define CHECK(expression)                                                                          \
+    do {                                                                                           \
+        if (!(expression)) {                                                                       \
+            fprintf(stderr, "CHECK failed at %s:%d: %s\n", __FILE__, __LINE__, #expression);       \
+            abort();                                                                               \
+        }                                                                                          \
     } while (0)
 
 typedef struct {
@@ -102,7 +102,7 @@ static void test_codec(void) {
     CHECK(raw[20] == 0x06u && raw[21] == 0x09u && raw[22] == 0xcbu && raw[23] == 0xc7u);
     CHECK(tf_decode(raw, sizeof(raw), &decoded));
     CHECK(decoded.sequence == 1u && decoded.value == input.value &&
-           decoded.timestamp_ms == input.timestamp_ms);
+          decoded.timestamp_ms == input.timestamp_ms);
     raw[12] ^= 1u;
     CHECK(!tf_decode(raw, sizeof(raw), &decoded));
     raw[12] ^= 1u;
@@ -212,6 +212,9 @@ static void test_unsupported_format(void) {
     CHECK(tf_recorder_init(&rec, buffer, CAP, &storage) == TF_UNSUPPORTED_FORMAT);
     CHECK(tf_record(&rec, 1u, 0u, 0u) == TF_INVALID_ARGUMENT);
     CHECK(mem.slots[1][2] == 2u);
+    mem.slots[1][20] ^= 1u;
+    CHECK(tf_recorder_init(&rec, buffer, CAP, &storage) == TF_OK);
+    CHECK(rec.count == 0u);
 }
 
 static void test_ambiguous_write(void) {
@@ -228,12 +231,48 @@ static void test_ambiguous_write(void) {
     expect(&rec, 0u, 1u, 50u);
 }
 
+static void test_persisted_sequence_limit(void) {
+    memory_store mem = {0};
+    tf_storage storage = {&mem, read_slot, write_slot};
+    tf_event buffer[CAP];
+    tf_recorder rec;
+    CHECK(tf_recorder_init(&rec, buffer, CAP, &storage) == TF_OK);
+    rec.next_sequence = UINT32_MAX - 1u;
+    CHECK(tf_record(&rec, 1u, 0u, 0u) == TF_OK);
+    CHECK(tf_record(&rec, 2u, 0u, 0u) == TF_OK);
+    CHECK(tf_recorder_init(&rec, buffer, CAP, &storage) == TF_OK);
+    CHECK(rec.count == 2u && rec.next_sequence == 0u);
+    expect(&rec, 0u, UINT32_MAX - 1u, 1u);
+    expect(&rec, 1u, UINT32_MAX, 2u);
+    CHECK(tf_record(&rec, 3u, 0u, 0u) == TF_SEQUENCE_EXHAUSTED);
+}
+
+static void test_capacity_change(void) {
+    memory_store mem = {0};
+    tf_storage storage = {&mem, read_slot, write_slot};
+    tf_event buffer[CAP];
+    tf_recorder rec;
+    CHECK(tf_recorder_init(&rec, buffer, CAP, &storage) == TF_OK);
+    for (uint16_t id = 1u; id <= CAP; ++id)
+        CHECK(tf_record(&rec, id, 0u, 0u) == TF_OK);
+    CHECK(tf_recorder_init(&rec, buffer, 2u, &storage) == TF_OK);
+    CHECK(rec.count == 1u);
+    expect(&rec, 0u, 4u, 4u);
+    CHECK(tf_record(&rec, 5u, 0u, 0u) == TF_OK);
+    CHECK(tf_recorder_init(&rec, buffer, 2u, &storage) == TF_OK);
+    CHECK(rec.count == 2u);
+    expect(&rec, 0u, 4u, 4u);
+    expect(&rec, 1u, 5u, 5u);
+}
+
 int main(void) {
     test_ram();
     test_codec();
     test_recovery();
     test_unsupported_format();
     test_ambiguous_write();
+    test_persisted_sequence_limit();
+    test_capacity_change();
     puts("recovered sequence and corruption checks passed");
     return 0;
 }
