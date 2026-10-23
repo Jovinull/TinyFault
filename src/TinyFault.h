@@ -6,7 +6,7 @@
 template <size_t Capacity> class TinyFaultRecorder {
     static_assert(Capacity > 0, "TinyFault capacity must be positive");
     tf_event buffer_[Capacity];
-    tf_recorder recorder_;
+    tf_recorder recorder_{};
 
   public:
     tf_status begin(const tf_storage *storage = 0) {

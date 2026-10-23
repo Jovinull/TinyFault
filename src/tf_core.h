@@ -20,7 +20,7 @@ typedef struct {
     uint32_t timestamp_ms;
 } tf_event;
 
-/* Return true only after a complete 24-byte transfer. */
+/* Read: 1 complete, 0 absent, negative I/O error. Write: 1 complete, otherwise error. */
 typedef int (*tf_read_slot)(void *context, size_t slot, uint8_t out[TF_RECORD_SIZE]);
 typedef int (*tf_write_slot)(void *context, size_t slot, const uint8_t data[TF_RECORD_SIZE]);
 
@@ -45,7 +45,7 @@ tf_status tf_recorder_init(tf_recorder *recorder, tf_event *buffer, size_t capac
 tf_status tf_record(tf_recorder *recorder, uint16_t id, uint32_t value, uint32_t timestamp_ms);
 int tf_get(const tf_recorder *recorder, size_t index, tf_event *out);
 void tf_encode(const tf_event *event, uint8_t out[TF_RECORD_SIZE]);
-int tf_decode(const uint8_t data[TF_RECORD_SIZE], tf_event *out);
+int tf_decode(const uint8_t *data, size_t length, tf_event *out);
 
 #ifdef __cplusplus
 }

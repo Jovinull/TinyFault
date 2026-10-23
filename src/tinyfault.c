@@ -47,10 +47,10 @@ void tf_encode(const tf_event *event, uint8_t out[TF_RECORD_SIZE]) {
     put32(out + 20, crc32(out, 20u));
 }
 
-int tf_decode(const uint8_t data[TF_RECORD_SIZE], tf_event *out) {
-    if (!data || !out || get16(data) != UINT16_C(0x5446) || data[2] != TF_FORMAT_VERSION ||
-        data[3] != TF_RECORD_SIZE || get16(data + 10) != 0u || get32(data + 4) == 0u ||
-        get32(data + 20) != crc32(data, 20u))
+int tf_decode(const uint8_t *data, size_t length, tf_event *out) {
+    if (!data || !out || length != TF_RECORD_SIZE || get16(data) != UINT16_C(0x5446) ||
+        data[2] != TF_FORMAT_VERSION || data[3] != TF_RECORD_SIZE || get16(data + 10) != 0u ||
+        get32(data + 4) == 0u || get32(data + 20) != crc32(data, 20u))
         return 0;
     out->sequence = get32(data + 4);
     out->id = get16(data + 8);
@@ -84,7 +84,13 @@ tf_status tf_recorder_init(tf_recorder *recorder, tf_event *buffer, size_t capac
     uint8_t raw[TF_RECORD_SIZE];
     tf_event event;
     for (size_t slot = 0; slot < capacity; ++slot) {
-        if (storage->read(storage->context, slot, raw) && tf_decode(raw, &event) &&
+        int result = storage->read(storage->context, slot, raw);
+        if (result < 0) {
+            recorder->events = NULL;
+            recorder->count = 0u;
+            return TF_STORAGE_ERROR;
+        }
+        if (result > 0 && tf_decode(raw, sizeof(raw), &event) &&
             event.sequence % capacity == slot && event.sequence > highest)
             highest = event.sequence;
     }
@@ -93,8 +99,13 @@ tf_status tf_recorder_init(tf_recorder *recorder, tf_event *buffer, size_t capac
     uint32_t first = highest > capacity ? highest - (uint32_t)capacity + 1u : 1u;
     for (uint32_t seq = first;; ++seq) {
         size_t slot = seq % capacity;
-        if (!storage->read(storage->context, slot, raw) || !tf_decode(raw, &event) ||
-            event.sequence != seq) {
+        int result = storage->read(storage->context, slot, raw);
+        if (result < 0) {
+            recorder->events = NULL;
+            recorder->count = 0u;
+            return TF_STORAGE_ERROR;
+        }
+        if (result == 0 || !tf_decode(raw, sizeof(raw), &event) || event.sequence != seq) {
             recorder->count = 0u;
             recorder->head = 0u;
         } else {
@@ -117,8 +128,8 @@ tf_status tf_record(tf_recorder *recorder, uint16_t id, uint32_t value, uint32_t
     if (recorder->storage.write) {
         uint8_t raw[TF_RECORD_SIZE];
         tf_encode(&event, raw);
-        if (!recorder->storage.write(recorder->storage.context, event.sequence % recorder->capacity,
-                                     raw)) {
+        if (recorder->storage.write(recorder->storage.context, event.sequence % recorder->capacity,
+                                    raw) != 1) {
             if (recorder->dropped != UINT32_MAX)
                 ++recorder->dropped;
             return TF_STORAGE_ERROR;
@@ -130,7 +141,7 @@ tf_status tf_record(tf_recorder *recorder, uint16_t id, uint32_t value, uint32_t
 }
 
 int tf_get(const tf_recorder *recorder, size_t index, tf_event *out) {
-    if (!recorder || !out || index >= recorder->count)
+    if (!recorder || !recorder->events || !out || index >= recorder->count)
         return 0;
     *out = recorder->events[(recorder->head + recorder->capacity - recorder->count + index) %
                             recorder->capacity];

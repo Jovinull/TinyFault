@@ -11,10 +11,18 @@ typedef struct {
     int fail_write;
     int partial_write;
     int fail_read_slot;
+    int error_read_slot;
+    int read_calls;
+    int error_on_call;
 } memory_store;
 
 static int read_slot(void *context, size_t slot, uint8_t out[TF_RECORD_SIZE]) {
     memory_store *store = (memory_store *)context;
+    ++store->read_calls;
+    if (store->error_on_call == store->read_calls)
+        return -1;
+    if (store->error_read_slot == (int)slot + 1)
+        return -1;
     if (store->fail_read_slot == (int)slot + 1)
         return 0;
     memcpy(out, store->slots[slot], TF_RECORD_SIZE);
@@ -77,29 +85,32 @@ static void test_codec(void) {
     assert(raw[0] == 0x46u && raw[1] == 0x54u && raw[2] == 1u && raw[3] == 24u);
     assert(raw[8] == 0x34u && raw[9] == 0x12u);
     assert(raw[20] == 0x06u && raw[21] == 0x09u && raw[22] == 0xcbu && raw[23] == 0xc7u);
-    assert(tf_decode(raw, &decoded));
+    assert(tf_decode(raw, sizeof(raw), &decoded));
     assert(decoded.sequence == 1u && decoded.value == input.value &&
            decoded.timestamp_ms == input.timestamp_ms);
     raw[12] ^= 1u;
-    assert(!tf_decode(raw, &decoded));
+    assert(!tf_decode(raw, sizeof(raw), &decoded));
     raw[12] ^= 1u;
     raw[2] = 2u;
-    assert(!tf_decode(raw, &decoded));
+    assert(!tf_decode(raw, sizeof(raw), &decoded));
     raw[2] = 1u;
     raw[3] = 23u;
-    assert(!tf_decode(raw, &decoded));
+    assert(!tf_decode(raw, sizeof(raw), &decoded));
     raw[3] = 24u;
     raw[10] = 1u;
-    assert(!tf_decode(raw, &decoded));
+    assert(!tf_decode(raw, sizeof(raw), &decoded));
     raw[10] = 0u;
     raw[0] = 0u;
-    assert(!tf_decode(raw, &decoded));
-    assert(!tf_decode(NULL, &decoded));
-    assert(!tf_decode(raw, NULL));
+    assert(!tf_decode(raw, sizeof(raw), &decoded));
+    assert(!tf_decode(NULL, sizeof(raw), &decoded));
+    assert(!tf_decode(raw, sizeof(raw), NULL));
+    assert(!tf_decode(raw, 0u, &decoded));
+    assert(!tf_decode(raw, TF_RECORD_SIZE - 1u, &decoded));
+    assert(!tf_decode(raw, TF_RECORD_SIZE + 1u, &decoded));
     tf_encode(&input, raw);
     for (size_t i = 0; i < TF_RECORD_SIZE; ++i) {
         raw[i] ^= 1u;
-        assert(!tf_decode(raw, &decoded));
+        assert(!tf_decode(raw, sizeof(raw), &decoded));
         raw[i] ^= 1u;
     }
 }
@@ -122,6 +133,15 @@ static void test_recovery(void) {
     assert(tf_recorder_init(&after, rebuilt, CAP, &storage) == TF_OK);
     assert(after.count == 3u);
     mem.fail_read_slot = 0;
+    mem.error_read_slot = 1;
+    assert(tf_recorder_init(&after, rebuilt, CAP, &storage) == TF_STORAGE_ERROR);
+    assert(tf_record(&after, 9u, 0u, 0u) == TF_INVALID_ARGUMENT);
+    mem.error_read_slot = 0;
+    mem.read_calls = 0;
+    mem.error_on_call = 6;
+    assert(tf_recorder_init(&after, rebuilt, CAP, &storage) == TF_STORAGE_ERROR);
+    assert(!tf_get(&after, 0u, rebuilt));
+    mem.error_on_call = 0;
     mem.slots[6u % CAP][12] ^= 0x40u;
     assert(tf_recorder_init(&after, rebuilt, CAP, &storage) == TF_OK);
     assert(after.count == 3u);
@@ -141,6 +161,13 @@ static void test_recovery(void) {
     assert(after.count == CAP);
     expect(&after, 0u, 3u, 3u);
     expect(&after, 3u, 6u, 7u);
+    fputs("recovered:", stdout);
+    for (size_t i = 0; i < after.count; ++i) {
+        tf_event event;
+        assert(tf_get(&after, i, &event));
+        printf(" %lu:%u", (unsigned long)event.sequence, event.id);
+    }
+    putchar('\n');
 }
 
 int main(void) {
