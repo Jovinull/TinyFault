@@ -6,3 +6,5 @@
 *.map
 *.log
 *.dmp
+__pycache__/
+*.pyc
