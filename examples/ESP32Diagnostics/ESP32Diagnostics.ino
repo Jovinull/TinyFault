@@ -7,6 +7,9 @@
 static nvs_handle_t storage_handle;
 static TinyFaultRecorder<4> recorder;
 static const uint16_t kBootEvent = 0xFF00u;
+static const uint16_t kManualEvent = 0xFF01u;
+static uint8_t manual_writes;
+static bool ready;
 
 static void slotKey(size_t slot, char key[8]) {
   snprintf(key, 8, "s%u", static_cast<unsigned>(slot));
@@ -65,7 +68,7 @@ void setup() {
     const uint32_t write_start = micros();
     const tf_status write_status = recorder.record(kBootEvent,
                                                    static_cast<uint32_t>(reset.native_reason), millis());
-    Serial.printf("TF_WRITE status=%d us=%lu\n", static_cast<int>(write_status),
+    Serial.printf("TF_WRITE kind=boot status=%d us=%lu\n", static_cast<int>(write_status),
                   static_cast<unsigned long>(micros() - write_start));
   }
   tf_event ram_buffer[1];
@@ -80,13 +83,33 @@ void setup() {
                   static_cast<unsigned long>(ram_recorder.next_sequence - 1),
                   static_cast<unsigned long>(micros() - ram_start));
   }
-  Serial.println("TF_READY command=r:software_reset");
+  ready = true;
+  Serial.println("TF_READY commands=r:software_reset,w:store_event");
 }
 
 void loop() {
-  if (Serial.available() && Serial.read() == 'r') {
+  if (!ready || !Serial.available()) return;
+  const char command = static_cast<char>(Serial.read());
+  if (command == 'r') {
     Serial.println("TF_COMMAND software_reset");
     Serial.flush();
     ESP.restart();
+  }
+  if (command == 'w' && manual_writes < 8) {
+    ++manual_writes;
+    tf_event last;
+    uint32_t next_sequence = 1;
+    if (recorder.count() != 0) {
+      if (!recorder.get(recorder.count() - 1, last)) {
+        Serial.println("TF_ERROR last_event");
+        return;
+      }
+      next_sequence = last.sequence + 1;
+    }
+    const uint32_t start = micros();
+    const tf_status status = recorder.record(kManualEvent, next_sequence, millis());
+    Serial.printf("TF_WRITE kind=manual status=%d seq=%lu us=%lu\n",
+                  static_cast<int>(status), static_cast<unsigned long>(next_sequence),
+                  static_cast<unsigned long>(micros() - start));
   }
 }

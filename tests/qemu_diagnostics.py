@@ -27,7 +27,7 @@ def main() -> None:
         restarted = boot(args.qemu.resolve(), flash, b"TF_READY", software_reset=True)
     require(r"TF_BOOT native=1 reason=power_on chip=ESP32[^ ]* flash=\d+", first)
     require(r"TF_RECOVERY status=0 count=0 us=\d+", first)
-    require(r"TF_WRITE status=0 us=\d+", first)
+    require(r"TF_WRITE kind=boot status=0 us=\d+", first)
     require(r"TF_RAM_RECORD iterations=10000 us=\d+", first)
     require(r"TF_BOOT native=1 reason=power_on chip=ESP32[^ ]* flash=\d+", second)
     require(r"TF_RECOVERY status=0 count=1 us=\d+", second)
@@ -40,7 +40,7 @@ def main() -> None:
     if restarted.count("TF_READY") != 2:
         raise AssertionError(f"Expected two completed boots:\n{restarted}")
     first_recovery = re.search(r"TF_RECOVERY status=0 count=0 us=(\d+)", first)
-    first_write = re.search(r"TF_WRITE status=0 us=(\d+)", first)
+    first_write = re.search(r"TF_WRITE kind=boot status=0 us=(\d+)", first)
     second_recovery = re.search(r"TF_RECOVERY status=0 count=1 us=(\d+)", second)
     ram = re.search(r"TF_RAM_RECORD iterations=10000 us=(\d+)", second)
     if first_recovery is None or first_write is None or second_recovery is None or ram is None:
