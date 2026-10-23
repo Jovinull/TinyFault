@@ -1,9 +1,9 @@
 #include <TinyFault.h>
-#include <Preferences.h>
+#include <nvs.h>
 
 #include <stdio.h>
 
-static Preferences preferences;
+static nvs_handle_t storage_handle;
 static TinyFaultRecorder<4> recorder;
 
 static void slotKey(size_t slot, char key[8]) {
@@ -11,28 +11,31 @@ static void slotKey(size_t slot, char key[8]) {
 }
 
 static int readSlot(void *context, size_t slot, uint8_t out[TF_RECORD_SIZE]) {
-  Preferences *prefs = static_cast<Preferences *>(context);
+  nvs_handle_t *handle = static_cast<nvs_handle_t *>(context);
   char key[8];
   slotKey(slot, key);
-  if (prefs->getBytesLength(key) != TF_RECORD_SIZE) return 0;
-  return prefs->getBytes(key, out, TF_RECORD_SIZE) == TF_RECORD_SIZE ? 1 : -1;
+  size_t length = TF_RECORD_SIZE;
+  const esp_err_t result = nvs_get_blob(*handle, key, out, &length);
+  if (result == ESP_ERR_NVS_NOT_FOUND) return 0;
+  return result == ESP_OK && length == TF_RECORD_SIZE ? 1 : -1;
 }
 
 static int writeSlot(void *context, size_t slot, const uint8_t data[TF_RECORD_SIZE]) {
-  Preferences *prefs = static_cast<Preferences *>(context);
+  nvs_handle_t *handle = static_cast<nvs_handle_t *>(context);
   char key[8];
   slotKey(slot, key);
-  return prefs->putBytes(key, data, TF_RECORD_SIZE) == TF_RECORD_SIZE;
+  if (nvs_set_blob(*handle, key, data, TF_RECORD_SIZE) != ESP_OK) return -1;
+  return nvs_commit(*handle) == ESP_OK ? 1 : -1;
 }
 
 void setup() {
   Serial.begin(115200);
   delay(1000);
-  if (!preferences.begin("tinyfault", false)) {
+  if (nvs_open("tinyfault", NVS_READWRITE, &storage_handle) != ESP_OK) {
     Serial.println("NVS initialization failed");
     return;
   }
-  const tf_storage storage = {&preferences, readSlot, writeSlot};
+  const tf_storage storage = {&storage_handle, readSlot, writeSlot};
   const tf_status status = recorder.begin(&storage);
   if (status == TF_UNSUPPORTED_FORMAT) {
     Serial.println("Stored event format is unsupported");

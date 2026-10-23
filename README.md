@@ -12,7 +12,7 @@ On ESP32, `tf_esp32_last_reset()` returns the last reset reason reported by ESP-
 
 ## Install and example
 
-For Arduino ESP32, place this repository in your sketchbook `libraries/TinyFault` directory. The library is not yet listed in Arduino Library Manager. Open `examples/ESP32PersistentEvents`, compile for an ESP32 board, and upload only to a board you may overwrite. The example uses the ESP32 `Preferences` NVS API for four event slots. Open Serial at 115200, reset the board, and the next boot prints completed events from the previous run. It writes one boot event per startup; frequent writes would wear flash. Values in this example are stored without encryption; do not record secrets. This is an application example, not a hardware verification claim.
+For Arduino ESP32, place this repository in your sketchbook `libraries/TinyFault` directory. The library is not yet listed in Arduino Library Manager. Open `examples/ESP32PersistentEvents`, compile for an ESP32 board, and upload only to a board you may overwrite. The example uses ESP-IDF NVS calls for four event slots, distinguishing missing keys from read errors and committing each write. Open Serial at 115200, reset the board, and the next boot prints completed events from the previous run. It writes one boot event per startup; frequent writes would wear flash. Values in this example are stored without encryption; do not record secrets. This is an application example, not a hardware verification claim.
 
 The library's small C++11 wrapper is instance based. This minimal sketch uses RAM only:
 
@@ -35,6 +35,8 @@ void loop() {}
 `readSlot` returns 1 for a complete 24-byte slot, 0 for an absent slot, or a negative value for an I/O error. `writeSlot` returns 1 only when the complete write succeeds. Call `get(index, event)` from index zero for oldest retained event. See the ESP32 example for a complete persistent backend.
 
 The separate [ESP32Diagnostics example](examples/ESP32Diagnostics/ESP32Diagnostics.ino) prints `TF_BOOT`, `TF_RECOVERY`, and `TF_EVENT` lines. It records one boot event in a fresh NVS namespace, then reads without further writes on later boots. Sending `r` at 115200 baud requests a software reset. It uses no network or credentials. Upload it only to a board whose existing firmware may be replaced. Its `TF_BOOT reason` describes the last reset as reported by ESP-IDF, including `unknown` when unavailable.
+
+After an authorized hardware upload and first successful boot, `python tests/hardware_diagnostics.py --port <confirmed-port>` uses optional PySerial 3.5 to request one software reset and checks the recovered boot event and native reset classification. Opening a serial port may itself reset some boards. This command is not part of CI and does not upload firmware.
 
 ## Build and verify
 
