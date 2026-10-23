@@ -10,6 +10,7 @@ typedef struct {
     uint8_t slots[CAP][TF_RECORD_SIZE];
     int fail_write;
     int partial_write;
+    int fail_after_write;
     int fail_read_slot;
     int error_read_slot;
     int invalid_read_slot;
@@ -41,6 +42,8 @@ static int write_slot(void *context, size_t slot, const uint8_t data[TF_RECORD_S
         return 0;
     }
     memcpy(store->slots[slot], data, TF_RECORD_SIZE);
+    if (store->fail_after_write)
+        return 0;
     return 1;
 }
 
@@ -176,10 +179,25 @@ static void test_recovery(void) {
     putchar('\n');
 }
 
+static void test_ambiguous_write(void) {
+    memory_store mem = {0};
+    tf_storage storage = {&mem, read_slot, write_slot};
+    tf_event buffer[CAP];
+    tf_recorder rec;
+    assert(tf_recorder_init(&rec, buffer, CAP, &storage) == TF_OK);
+    mem.fail_after_write = 1;
+    assert(tf_record(&rec, 50u, 1u, 2u) == TF_STORAGE_ERROR);
+    assert(rec.count == 0u);
+    assert(tf_recorder_init(&rec, buffer, CAP, &storage) == TF_OK);
+    assert(rec.count == 1u);
+    expect(&rec, 0u, 1u, 50u);
+}
+
 int main(void) {
     test_ram();
     test_codec();
     test_recovery();
+    test_ambiguous_write();
     puts("recovered sequence and corruption checks passed");
     return 0;
 }
