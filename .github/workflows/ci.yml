@@ -6,10 +6,13 @@ on:
 jobs:
   native:
     runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        build_type: [Debug, Release]
     steps:
       - uses: actions/checkout@v4
       - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
       - name: Build
         run: cmake --build build --parallel
       - name: Test
@@ -41,6 +44,8 @@ jobs:
         run: arduino-cli compile --fqbn esp32:esp32:esp32s3 --libraries "$GITHUB_WORKSPACE/.." --build-path "$RUNNER_TEMP/tinyfault-arduino-s3" --warnings all examples/ESP32PersistentEvents
       - name: Compile ESP32-C3 example
         run: arduino-cli compile --fqbn esp32:esp32:esp32c3 --libraries "$GITHUB_WORKSPACE/.." --build-path "$RUNNER_TEMP/tinyfault-arduino-c3" --warnings all examples/ESP32PersistentEvents
+      - name: Compile diagnostics example
+        run: arduino-cli compile --fqbn esp32:esp32:esp32:FlashMode=dio,FlashFreq=40 --libraries "$GITHUB_WORKSPACE/.." --build-path "$RUNNER_TEMP/tinyfault-diagnostics" --warnings all examples/ESP32Diagnostics
       - name: Install Espressif QEMU
         run: |
           sudo apt-get update
@@ -54,3 +59,4 @@ jobs:
           QEMU_BIN=$(find "$RUNNER_TEMP/tinyfault-qemu" -name qemu-system-xtensa -type f -print -quit)
           test -n "$QEMU_BIN"
           python3 tests/qemu_smoke.py --qemu "$QEMU_BIN" --image "$RUNNER_TEMP/tinyfault-arduino/ESP32PersistentEvents.ino.merged.bin"
+          python3 tests/qemu_diagnostics.py --qemu "$QEMU_BIN" --image "$RUNNER_TEMP/tinyfault-diagnostics/ESP32Diagnostics.ino.merged.bin"
