@@ -6,7 +6,9 @@ TinyFault records explicit events in a bounded buffer and can recover completed 
 
 Each event has a numeric ID, value, caller-supplied millisecond timestamp and sequence number. Optional storage callbacks persist 24-byte versioned records with CRC-32/ISO-HDLC. Recovery scans slots and restores the newest contiguous valid sequence. Full buffers retain recent events; `dropped` counts overwritten RAM events and failed writes during the current session. A write callback error returns `TF_STORAGE_ERROR` without adding the event to RAM; if a backend reports failure after committing, the event may still appear after reboot.
 
-The recorder does **not** capture crashes, watchdogs or reset reasons automatically. It cannot recover events never written, and a partial overwrite can remove an older event. CRC detects accidental corruption, not tampering. The instance is not safe for concurrent calls from tasks or interrupts. Sequence numbers cannot wrap: recording returns `TF_SEQUENCE_EXHAUSTED` after `UINT32_MAX`. A valid record with an unsupported version blocks initialization with `TF_UNSUPPORTED_FORMAT` so older firmware does not silently overwrite it.
+The recorder does **not** capture crashes or watchdogs automatically. It cannot recover events never written, and a partial overwrite can remove an older event. CRC detects accidental corruption, not tampering. The instance is not safe for concurrent calls from tasks or interrupts. Sequence numbers cannot wrap: recording returns `TF_SEQUENCE_EXHAUSTED` after `UINT32_MAX`. A valid record with an unsupported version blocks initialization with `TF_UNSUPPORTED_FORMAT` so older firmware does not silently overwrite it.
+
+On ESP32, `tf_esp32_last_reset()` returns the last reset reason reported by ESP-IDF. Its `reason` field is a stable TinyFault category and `native_reason` retains the SDK value, including when the category is `TF_RESET_UNKNOWN`. `tf_reset_reason_name()` gives a short printable name. A reset reason identifies what the SDK observed; it does not establish the root cause or replace an ESP-IDF core dump. No reset history is persisted automatically.
 
 ## Install and example
 
@@ -32,6 +34,8 @@ void loop() {}
 
 `readSlot` returns 1 for a complete 24-byte slot, 0 for an absent slot, or a negative value for an I/O error. `writeSlot` returns 1 only when the complete write succeeds. Call `get(index, event)` from index zero for oldest retained event. See the ESP32 example for a complete persistent backend.
 
+The separate [ESP32Diagnostics example](examples/ESP32Diagnostics/ESP32Diagnostics.ino) prints `TF_BOOT`, `TF_RECOVERY`, and `TF_EVENT` lines. It records one boot event in a fresh NVS namespace, then reads without further writes on later boots. Sending `r` at 115200 baud requests a software reset. It uses no network or credentials. Upload it only to a board whose existing firmware may be replaced. Its `TF_BOOT reason` describes the last reset as reported by ESP-IDF, including `unknown` when unavailable.
+
 ## Build and verify
 
 ```sh
@@ -42,6 +46,8 @@ ctest --test-dir build --output-on-failure
 
 For Arduino CLI 1.5.1 with the ESP32 core 3.3.12 installed, compile the example with `arduino-cli compile --fqbn esp32:esp32:esp32 --libraries <parent-of-this-repository> examples/ESP32PersistentEvents`. No firmware upload is part of these checks.
 
+Compile the diagnostics example with the same command, replacing the sketch path with `examples/ESP32Diagnostics`. The C API is in `tf_esp32_reset.h`; its implementation is compiled only for Arduino ESP32 or ESP-IDF builds. The portable core remains independent of ESP-IDF.
+
 The optional [QEMU smoke test](tests/qemu_smoke.py) starts the ESP32 firmware twice against a copied flash image and checks that the second boot recovers `seq=1 id=1`. Build with `--fqbn esp32:esp32:esp32:FlashMode=dio,FlashFreq=40 --build-path out/arduino-build` and run `python tests/qemu_smoke.py --qemu <path-to-Espressif-qemu-system-xtensa> --image out/arduino-build/ESP32PersistentEvents.ino.merged.bin`. The tested [Espressif QEMU release](https://github.com/espressif/qemu/releases/tag/esp-develop-9.2.2-20260417) is 9.2.2. This test does not measure physical flash reliability.
 
 | Target | Evidence |
@@ -49,6 +55,7 @@ The optional [QEMU smoke test](tests/qemu_smoke.py) starts the ESP32 firmware tw
 | Native host | Build and CTest; see local or CI results |
 | ESP32 classic Arduino | Build Verified with core 3.3.12 |
 | ESP32 classic QEMU | Emulator Tested: NVS event recovered on second boot |
+| ESP32 reset diagnostics in QEMU | Emulator Tested: SDK power-on and software reset reasons, NVS boot event recovery |
 | ESP32-S3 Arduino | Build Verified with core 3.3.12; execution untested |
 | ESP32-C3 Arduino | Build Verified with core 3.3.12; execution untested |
 | ESP32 physical board | Not tested |
