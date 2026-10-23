@@ -52,10 +52,8 @@ int tf_decode(const uint8_t *data, size_t length, tf_event *out) {
         data[2] != TF_FORMAT_VERSION || data[3] != TF_RECORD_SIZE || get16(data + 10) != 0u ||
         get32(data + 4) == 0u || get32(data + 20) != crc32(data, 20u))
         return 0;
-    out->sequence = get32(data + 4);
-    out->id = get16(data + 8);
-    out->value = get32(data + 12);
-    out->timestamp_ms = get32(data + 16);
+    tf_event decoded = {get32(data + 4), get16(data + 8), get32(data + 12), get32(data + 16)};
+    *out = decoded;
     return 1;
 }
 

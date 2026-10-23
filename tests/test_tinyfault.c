@@ -119,6 +119,13 @@ static void test_codec(void) {
         assert(!tf_decode(raw, sizeof(raw), &decoded));
         raw[i] ^= 1u;
     }
+    union {
+        tf_event event;
+        uint8_t bytes[TF_RECORD_SIZE];
+    } overlapping;
+    memcpy(overlapping.bytes, raw, sizeof(raw));
+    assert(tf_decode(overlapping.bytes, sizeof(overlapping.bytes), &overlapping.event));
+    assert(overlapping.event.value == input.value);
 }
 
 static void test_recovery(void) {
