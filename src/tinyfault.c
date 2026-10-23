@@ -88,6 +88,11 @@ tf_status tf_recorder_init(tf_recorder *recorder, tf_event *buffer, size_t capac
             recorder->count = 0u;
             return TF_STORAGE_ERROR;
         }
+        if (result == 1 && get16(raw) == UINT16_C(0x5446) && raw[2] != TF_FORMAT_VERSION &&
+            raw[3] == TF_RECORD_SIZE && get32(raw + 20) == crc32(raw, 20u)) {
+            recorder->events = NULL;
+            return TF_UNSUPPORTED_FORMAT;
+        }
         if (result == 1 && tf_decode(raw, sizeof(raw), &event) &&
             event.sequence % capacity == slot && event.sequence > highest)
             highest = event.sequence;

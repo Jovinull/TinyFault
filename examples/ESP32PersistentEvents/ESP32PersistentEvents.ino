@@ -33,7 +33,12 @@ void setup() {
     return;
   }
   const tf_storage storage = {&preferences, readSlot, writeSlot};
-  if (recorder.begin(&storage) != TF_OK) {
+  const tf_status status = recorder.begin(&storage);
+  if (status == TF_UNSUPPORTED_FORMAT) {
+    Serial.println("Stored event format is unsupported");
+    return;
+  }
+  if (status != TF_OK) {
     Serial.println("Recorder initialization failed");
     return;
   }

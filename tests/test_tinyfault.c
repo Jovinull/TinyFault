@@ -186,6 +186,25 @@ static void test_recovery(void) {
     putchar('\n');
 }
 
+static void test_unsupported_format(void) {
+    const tf_event input = {1u, 0x1234u, 0x12345678u, 0xabcdef01u};
+    memory_store mem = {0};
+    tf_storage storage = {&mem, read_slot, write_slot};
+    tf_event buffer[CAP];
+    tf_recorder rec;
+    uint8_t raw[TF_RECORD_SIZE];
+    tf_encode(&input, raw);
+    raw[2] = 2u;
+    raw[20] = 0x64u;
+    raw[21] = 0xd4u;
+    raw[22] = 0x4du;
+    raw[23] = 0x2du;
+    memcpy(mem.slots[1], raw, TF_RECORD_SIZE);
+    assert(tf_recorder_init(&rec, buffer, CAP, &storage) == TF_UNSUPPORTED_FORMAT);
+    assert(tf_record(&rec, 1u, 0u, 0u) == TF_INVALID_ARGUMENT);
+    assert(mem.slots[1][2] == 2u);
+}
+
 static void test_ambiguous_write(void) {
     memory_store mem = {0};
     tf_storage storage = {&mem, read_slot, write_slot};
@@ -204,6 +223,7 @@ int main(void) {
     test_ram();
     test_codec();
     test_recovery();
+    test_unsupported_format();
     test_ambiguous_write();
     puts("recovered sequence and corruption checks passed");
     return 0;

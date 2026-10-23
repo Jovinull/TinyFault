@@ -11,7 +11,13 @@ extern "C" {
 #define TF_RECORD_SIZE 24u
 #define TF_FORMAT_VERSION 1u
 
-typedef enum { TF_OK = 0, TF_INVALID_ARGUMENT, TF_STORAGE_ERROR, TF_SEQUENCE_EXHAUSTED } tf_status;
+typedef enum {
+    TF_OK = 0,
+    TF_INVALID_ARGUMENT,
+    TF_STORAGE_ERROR,
+    TF_SEQUENCE_EXHAUSTED,
+    TF_UNSUPPORTED_FORMAT
+} tf_status;
 
 typedef struct {
     uint32_t sequence;
