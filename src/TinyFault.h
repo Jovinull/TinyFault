@@ -9,6 +9,10 @@ template <size_t Capacity> class TinyFaultRecorder {
     tf_recorder recorder_{};
 
   public:
+    TinyFaultRecorder() = default;
+    TinyFaultRecorder(const TinyFaultRecorder &) = delete;
+    TinyFaultRecorder &operator=(const TinyFaultRecorder &) = delete;
+
     tf_status begin(const tf_storage *storage = 0) {
         return tf_recorder_init(&recorder_, buffer_, Capacity, storage);
     }
