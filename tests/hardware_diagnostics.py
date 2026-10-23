@@ -12,7 +12,8 @@ def check(lines: list[str]) -> None:
     boot = re.search(r"TF_BOOT native=(\d+) reason=(\w+) chip=([^ ]+) flash=(\d+)", output)
     recovery = re.search(r"TF_RECOVERY status=(\d+) count=(\d+) us=(\d+)", output)
     events = re.findall(r"TF_EVENT seq=(\d+) id=(\d+) value=(\d+) ms=(\d+)", output)
-    if boot is None or recovery is None or "TF_READY" not in output:
+    ram = re.search(r"TF_RAM_RECORD iterations=10000 us=(\d+)", output)
+    if boot is None or recovery is None or ram is None or "TF_READY" not in output:
         raise AssertionError(f"Incomplete diagnostics boot:\n{output}")
     if boot.group(2) != "software" or recovery.group(1) != "0":
         raise AssertionError(f"Unexpected reset reason or recovery status:\n{output}")
@@ -23,7 +24,7 @@ def check(lines: list[str]) -> None:
     print(
         f"Hardware serial check passed: chip={boot.group(3)} flash={boot.group(4)} bytes, "
         f"software reset, {recovery.group(2)} recovered event(s), "
-        f"recovery={recovery.group(3)} us"
+        f"recovery={recovery.group(3)} us, 10000 RAM records={ram.group(1)} us"
     )
 
 

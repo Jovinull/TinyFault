@@ -28,9 +28,11 @@ def main() -> None:
     require(r"TF_BOOT native=1 reason=power_on chip=ESP32[^ ]* flash=\d+", first)
     require(r"TF_RECOVERY status=0 count=0 us=\d+", first)
     require(r"TF_WRITE status=0 us=\d+", first)
+    require(r"TF_RAM_RECORD iterations=10000 us=\d+", first)
     require(r"TF_BOOT native=1 reason=power_on chip=ESP32[^ ]* flash=\d+", second)
     require(r"TF_RECOVERY status=0 count=1 us=\d+", second)
     require(r"TF_EVENT seq=1 id=65280 value=1 ms=\d+", second)
+    require(r"TF_RAM_RECORD iterations=10000 us=\d+", second)
     if "TF_WRITE" in second:
         raise AssertionError("Second boot unexpectedly wrote NVS")
     require(r"TF_COMMAND software_reset", restarted)
@@ -40,13 +42,15 @@ def main() -> None:
     first_recovery = re.search(r"TF_RECOVERY status=0 count=0 us=(\d+)", first)
     first_write = re.search(r"TF_WRITE status=0 us=(\d+)", first)
     second_recovery = re.search(r"TF_RECOVERY status=0 count=1 us=(\d+)", second)
-    if first_recovery is None or first_write is None or second_recovery is None:
+    ram = re.search(r"TF_RAM_RECORD iterations=10000 us=(\d+)", second)
+    if first_recovery is None or first_write is None or second_recovery is None or ram is None:
         raise AssertionError("Missing measured operation time")
     print(
         "QEMU ESP32 diagnostics passed: power-on, NVS recovery and software reset; "
         f"emulated recovery empty={first_recovery.group(1)} us, "
         f"write={first_write.group(1)} us, "
-        f"recovery with one event={second_recovery.group(1)} us"
+        f"recovery with one event={second_recovery.group(1)} us, "
+        f"10000 RAM records={ram.group(1)} us"
     )
 
 
