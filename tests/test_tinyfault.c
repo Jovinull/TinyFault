@@ -12,6 +12,7 @@ typedef struct {
     int partial_write;
     int fail_read_slot;
     int error_read_slot;
+    int invalid_read_slot;
     int read_calls;
     int error_on_call;
 } memory_store;
@@ -23,6 +24,8 @@ static int read_slot(void *context, size_t slot, uint8_t out[TF_RECORD_SIZE]) {
         return -1;
     if (store->error_read_slot == (int)slot + 1)
         return -1;
+    if (store->invalid_read_slot == (int)slot + 1)
+        return 2;
     if (store->fail_read_slot == (int)slot + 1)
         return 0;
     memcpy(out, store->slots[slot], TF_RECORD_SIZE);
@@ -137,6 +140,9 @@ static void test_recovery(void) {
     assert(tf_recorder_init(&after, rebuilt, CAP, &storage) == TF_STORAGE_ERROR);
     assert(tf_record(&after, 9u, 0u, 0u) == TF_INVALID_ARGUMENT);
     mem.error_read_slot = 0;
+    mem.invalid_read_slot = 1;
+    assert(tf_recorder_init(&after, rebuilt, CAP, &storage) == TF_STORAGE_ERROR);
+    mem.invalid_read_slot = 0;
     mem.read_calls = 0;
     mem.error_on_call = 6;
     assert(tf_recorder_init(&after, rebuilt, CAP, &storage) == TF_STORAGE_ERROR);

@@ -85,12 +85,12 @@ tf_status tf_recorder_init(tf_recorder *recorder, tf_event *buffer, size_t capac
     tf_event event;
     for (size_t slot = 0; slot < capacity; ++slot) {
         int result = storage->read(storage->context, slot, raw);
-        if (result < 0) {
+        if (result < 0 || result > 1) {
             recorder->events = NULL;
             recorder->count = 0u;
             return TF_STORAGE_ERROR;
         }
-        if (result > 0 && tf_decode(raw, sizeof(raw), &event) &&
+        if (result == 1 && tf_decode(raw, sizeof(raw), &event) &&
             event.sequence % capacity == slot && event.sequence > highest)
             highest = event.sequence;
     }
@@ -100,7 +100,7 @@ tf_status tf_recorder_init(tf_recorder *recorder, tf_event *buffer, size_t capac
     for (uint32_t seq = first;; ++seq) {
         size_t slot = seq % capacity;
         int result = storage->read(storage->context, slot, raw);
-        if (result < 0) {
+        if (result < 0 || result > 1) {
             recorder->events = NULL;
             recorder->count = 0u;
             return TF_STORAGE_ERROR;
