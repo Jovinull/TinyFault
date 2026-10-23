@@ -5,6 +5,10 @@ from pathlib import Path
 import re
 import shutil
 import tempfile
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from tools.tinyfault_decode import parse
 
 from qemu_smoke import boot
 
@@ -24,7 +28,7 @@ def main() -> None:
         shutil.copyfile(args.image, flash)
         first = boot(args.qemu.resolve(), flash, b"TF_READY")
         second = boot(args.qemu.resolve(), flash, b"TF_READY")
-        restarted = boot(args.qemu.resolve(), flash, b"TF_READY", software_reset=True)
+        restarted = boot(args.qemu.resolve(), flash, b"TF_READY", software_reset=True, export=True)
     require(r"TF_BOOT native=1 reason=power_on chip=ESP32[^ ]* flash=\d+", first)
     require(r"TF_RECOVERY status=0 count=0 us=\d+", first)
     require(r"TF_WRITE kind=boot status=0 us=\d+", first)
@@ -39,6 +43,9 @@ def main() -> None:
     require(r"TF_BOOT native=3 reason=software chip=ESP32[^ ]* flash=\d+", restarted)
     if restarted.count("TF_READY") != 2:
         raise AssertionError(f"Expected two completed boots:\n{restarted}")
+    exported = parse(line for line in restarted.splitlines() if line.startswith("TFX1 "))
+    if len(exported) != 1 or exported[0]["sequence"] != 1 or exported[0]["id"] != 0xFF00:
+        raise AssertionError(f"Export differs from recovered event:\n{restarted}")
     first_recovery = re.search(r"TF_RECOVERY status=0 count=0 us=(\d+)", first)
     first_write = re.search(r"TF_WRITE kind=boot status=0 us=(\d+)", first)
     second_recovery = re.search(r"TF_RECOVERY status=0 count=1 us=(\d+)", second)
@@ -46,7 +53,8 @@ def main() -> None:
     if first_recovery is None or first_write is None or second_recovery is None or ram is None:
         raise AssertionError("Missing measured operation time")
     print(
-        "QEMU ESP32 diagnostics passed: power-on, NVS recovery and software reset; "
+        "QEMU ESP32 diagnostics passed: power-on, NVS recovery, software reset, "
+        "TFX1 export of one recovered event; "
         f"emulated recovery empty={first_recovery.group(1)} us, "
         f"write={first_write.group(1)} us, "
         f"recovery with one event={second_recovery.group(1)} us, "

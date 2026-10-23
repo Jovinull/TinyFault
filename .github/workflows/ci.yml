@@ -22,7 +22,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=clang -DCMAKE_C_FLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer' -DCMAKE_EXE_LINKER_FLAGS='-fsanitize=address,undefined'
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_C_FLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer' -DCMAKE_CXX_FLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer' -DCMAKE_EXE_LINKER_FLAGS='-fsanitize=address,undefined'
       - name: Build
         run: cmake --build build --parallel
       - name: Test
@@ -38,14 +38,25 @@ jobs:
         run: |
           arduino-cli core update-index --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
           arduino-cli core install esp32:esp32@3.3.12 --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
-      - name: Compile example
-        run: arduino-cli compile --fqbn esp32:esp32:esp32:FlashMode=dio,FlashFreq=40 --libraries "$GITHUB_WORKSPACE/.." --build-path "$RUNNER_TEMP/tinyfault-arduino" --warnings all examples/ESP32PersistentEvents
+      - name: Compile minimal example
+        run: arduino-cli compile --fqbn esp32:esp32:esp32 --libraries "$GITHUB_WORKSPACE/.." --build-path "$RUNNER_TEMP/tinyfault-minimal" --warnings all examples/MinimalRecorder
+      - name: Compile persistent example
+        run: arduino-cli compile --fqbn esp32:esp32:esp32:FlashMode=dio,FlashFreq=40 --libraries "$GITHUB_WORKSPACE/.." --build-path "$RUNNER_TEMP/tinyfault-arduino" --warnings all examples/ESP32PersistentRecorder
       - name: Compile ESP32-S3 example
-        run: arduino-cli compile --fqbn esp32:esp32:esp32s3 --libraries "$GITHUB_WORKSPACE/.." --build-path "$RUNNER_TEMP/tinyfault-arduino-s3" --warnings all examples/ESP32PersistentEvents
+        run: arduino-cli compile --fqbn esp32:esp32:esp32s3 --libraries "$GITHUB_WORKSPACE/.." --build-path "$RUNNER_TEMP/tinyfault-arduino-s3" --warnings all examples/ESP32PersistentRecorder
       - name: Compile ESP32-C3 example
-        run: arduino-cli compile --fqbn esp32:esp32:esp32c3 --libraries "$GITHUB_WORKSPACE/.." --build-path "$RUNNER_TEMP/tinyfault-arduino-c3" --warnings all examples/ESP32PersistentEvents
+        run: arduino-cli compile --fqbn esp32:esp32:esp32c3 --libraries "$GITHUB_WORKSPACE/.." --build-path "$RUNNER_TEMP/tinyfault-arduino-c3" --warnings all examples/ESP32PersistentRecorder
       - name: Compile diagnostics example
         run: arduino-cli compile --fqbn esp32:esp32:esp32:FlashMode=dio,FlashFreq=40 --libraries "$GITHUB_WORKSPACE/.." --build-path "$RUNNER_TEMP/tinyfault-diagnostics" --warnings all examples/ESP32Diagnostics
+      - name: Validate ZIP installation outside checkout
+        run: |
+          mkdir -p "$RUNNER_TEMP/package/TinyFault" "$RUNNER_TEMP/consumer"
+          cp -R src examples library.properties LICENSE README.md "$RUNNER_TEMP/package/TinyFault/"
+          (cd "$RUNNER_TEMP/package" && zip -qr "$RUNNER_TEMP/TinyFault.zip" TinyFault)
+          arduino-cli config set library.enable_unsafe_install true
+          arduino-cli lib install --zip-path "$RUNNER_TEMP/TinyFault.zip"
+          cp -R examples/MinimalRecorder "$RUNNER_TEMP/consumer/"
+          arduino-cli compile --fqbn esp32:esp32:esp32 --build-path "$RUNNER_TEMP/tinyfault-installed" --warnings all "$RUNNER_TEMP/consumer/MinimalRecorder"
       - name: Install Espressif QEMU
         run: |
           sudo apt-get update
@@ -58,5 +69,5 @@ jobs:
         run: |
           QEMU_BIN=$(find "$RUNNER_TEMP/tinyfault-qemu" -name qemu-system-xtensa -type f -print -quit)
           test -n "$QEMU_BIN"
-          python3 tests/qemu_smoke.py --qemu "$QEMU_BIN" --image "$RUNNER_TEMP/tinyfault-arduino/ESP32PersistentEvents.ino.merged.bin"
+          python3 tests/qemu_smoke.py --qemu "$QEMU_BIN" --image "$RUNNER_TEMP/tinyfault-arduino/ESP32PersistentRecorder.ino.merged.bin"
           python3 tests/qemu_diagnostics.py --qemu "$QEMU_BIN" --image "$RUNNER_TEMP/tinyfault-diagnostics/ESP32Diagnostics.ino.merged.bin"

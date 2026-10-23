@@ -1,37 +1,14 @@
 #include <TinyFault.h>
+#include <TinyFaultExport.h>
+#include <TinyFaultNvs.h>
 #include <tf_esp32_reset.h>
-#include <nvs.h>
 
-#include <stdio.h>
-
-static nvs_handle_t storage_handle;
+static TinyFaultNvsStorage storage;
 static TinyFaultRecorder<4> recorder;
 static const uint16_t kBootEvent = 0xFF00u;
 static const uint16_t kManualEvent = 0xFF01u;
 static uint8_t manual_writes;
 static bool ready;
-
-static void slotKey(size_t slot, char key[8]) {
-  snprintf(key, 8, "s%u", static_cast<unsigned>(slot));
-}
-
-static int readSlot(void *context, size_t slot, uint8_t out[TF_RECORD_SIZE]) {
-  nvs_handle_t *handle = static_cast<nvs_handle_t *>(context);
-  char key[8];
-  slotKey(slot, key);
-  size_t length = TF_RECORD_SIZE;
-  const esp_err_t result = nvs_get_blob(*handle, key, out, &length);
-  if (result == ESP_ERR_NVS_NOT_FOUND) return 0;
-  return result == ESP_OK && length == TF_RECORD_SIZE ? 1 : -1;
-}
-
-static int writeSlot(void *context, size_t slot, const uint8_t data[TF_RECORD_SIZE]) {
-  nvs_handle_t *handle = static_cast<nvs_handle_t *>(context);
-  char key[8];
-  slotKey(slot, key);
-  if (nvs_set_blob(*handle, key, data, TF_RECORD_SIZE) != ESP_OK) return -1;
-  return nvs_commit(*handle) == ESP_OK ? 1 : -1;
-}
 
 void setup() {
   Serial.begin(115200);
@@ -41,17 +18,20 @@ void setup() {
                 tf_reset_reason_name(reset.reason), ESP.getChipModel(),
                 static_cast<unsigned long>(ESP.getFlashChipSize()));
 
-  if (nvs_open("tinyfault-m2", NVS_READWRITE, &storage_handle) != ESP_OK) {
-    Serial.println("TF_ERROR nvs_open");
+  const esp_err_t open_status = storage.open("tinyfault-m2");
+  if (open_status != ESP_OK) {
+    Serial.printf("TF_ERROR nvs_open code=%d\n", static_cast<int>(open_status));
     return;
   }
-  const tf_storage storage = {&storage_handle, readSlot, writeSlot};
   const uint32_t start = micros();
-  const tf_status status = recorder.begin(&storage);
+  const tf_status status = storage.begin(recorder);
   const uint32_t recovery_us = micros() - start;
   Serial.printf("TF_RECOVERY status=%d count=%u us=%lu\n", static_cast<int>(status),
                 static_cast<unsigned>(recorder.count()), static_cast<unsigned long>(recovery_us));
-  if (status != TF_OK) return;
+  if (status != TF_OK) {
+    Serial.printf("TF_ERROR recovery_nvs code=%d\n", static_cast<int>(storage.lastError()));
+    return;
+  }
 
   for (size_t index = 0; index < recorder.count(); ++index) {
     tf_event event;
@@ -84,7 +64,7 @@ void setup() {
                   static_cast<unsigned long>(micros() - ram_start));
   }
   ready = true;
-  Serial.println("TF_READY commands=r:software_reset,w:store_event");
+  Serial.println("TF_READY commands=r:software_reset,w:store_event,x:export");
 }
 
 void loop() {
@@ -111,5 +91,8 @@ void loop() {
     Serial.printf("TF_WRITE kind=manual status=%d seq=%lu us=%lu\n",
                   static_cast<int>(status), static_cast<unsigned long>(next_sequence),
                   static_cast<unsigned long>(micros() - start));
+  }
+  if (command == 'x' && !tinyfaultExport(recorder, Serial)) {
+    Serial.println("TF_ERROR export");
   }
 }

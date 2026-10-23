@@ -14,8 +14,9 @@ import time
 def boot(
     qemu: Path,
     flash: Path,
-    ready: bytes = b"Boot event stored. Reset to see it recovered.",
+    ready: bytes = b"Recorder ready.",
     software_reset: bool = False,
+    export: bool = False,
 ) -> str:
     command = [
         str(qemu),
@@ -46,6 +47,7 @@ def boot(
     captured = bytearray()
     deadline = time.monotonic() + 30.0
     reset_sent = False
+    export_sent = False
     try:
         while time.monotonic() < deadline:
             if process.poll() is not None and lines.empty():
@@ -60,14 +62,22 @@ def boot(
                 process.stdin.write(b"r")
                 process.stdin.flush()
                 reset_sent = True
-            if captured.count(ready) >= (2 if software_reset else 1):
+            ready_count = captured.count(ready)
+            if export and not export_sent and ready_count >= (2 if software_reset else 1):
+                assert process.stdin is not None
+                process.stdin.write(b"x")
+                process.stdin.flush()
+                export_sent = True
+            if (b"TFX1 END" in captured if export else ready_count >= (2 if software_reset else 1)):
                 break
         else:
             raise RuntimeError(
                 "QEMU boot timed out:\n" + captured.decode("utf-8", errors="replace")[-3000:]
             )
         output = captured.decode("utf-8", errors="replace")
-        if output.count(ready.decode("ascii")) < (2 if software_reset else 1):
+        if output.count(ready.decode("ascii")) < (2 if software_reset else 1) or (
+            export and "TFX1 END" not in output
+        ):
             raise RuntimeError(f"Sketch did not finish setup:\n{output}")
         return output
     finally:

@@ -1,11 +1,16 @@
 """Exercise ESP32Diagnostics on an authorized board without uploading firmware."""
 
 import argparse
+from pathlib import Path
 import re
 import statistics
+import sys
 import time
 
 import serial
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from tools.tinyfault_decode import parse
 
 
 def read_marker(link: serial.Serial, marker: str, timeout: float) -> list[str]:
@@ -21,7 +26,7 @@ def read_marker(link: serial.Serial, marker: str, timeout: float) -> list[str]:
     raise TimeoutError(f"No {marker} within {timeout}s; observed: {lines}")
 
 
-def check_boot(lines: list[str], required_sequences: set[int]) -> tuple[int, int]:
+def check_boot(lines: list[str], required_sequences: set[int]) -> tuple[int, int, list[tuple[int, ...]]]:
     output = "\n".join(lines)
     boot = re.search(r"TF_BOOT native=(\d+) reason=(\w+) chip=([^ ]+) flash=(\d+)", output)
     recovery = re.search(r"TF_RECOVERY status=(\d+) count=(\d+) us=(\d+)", output)
@@ -45,7 +50,30 @@ def check_boot(lines: list[str], required_sequences: set[int]) -> tuple[int, int
             raise AssertionError(f"Manual event value differs from sequence:\n{output}")
     if "TF_WRITE" in output:
         raise AssertionError(f"Firmware wrote NVS on repeat boot:\n{output}")
-    return int(recovery.group(3)), int(ram.group(1))
+    return int(recovery.group(3)), int(ram.group(1)), [tuple(map(int, event)) for event in events]
+
+
+def check_export(link: serial.Serial, expected: list[tuple[int, ...]]) -> None:
+    link.reset_input_buffer()
+    link.write(b"x")
+    link.flush()
+    lines: list[str] = []
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        line = link.readline().decode("ascii", errors="replace").strip()
+        if line.startswith("TF_ERROR"):
+            raise AssertionError(f"Firmware export failed: {line}")
+        if line.startswith("TFX") or lines:
+            lines.append(line)
+        if line.startswith("TFX1 END"):
+            decoded = parse(lines)
+            actual = [(item["sequence"], item["id"], item["value"], item["timestamp_ms"])
+                      for item in decoded]
+            if actual != expected:
+                raise AssertionError(f"Export differs from recovered events: {actual} != {expected}")
+            print(f"Physical TFX1 export passed: {len(actual)} recovered event(s)")
+            return
+    raise TimeoutError(f"No complete TFX1 export within 20s; observed: {lines}")
 
 
 def summarize(label: str, values: list[int]) -> None:
@@ -60,6 +88,7 @@ def main() -> None:
     parser.add_argument("--port", required=True, help="Confirmed ESP32 serial port, e.g. COM6")
     parser.add_argument("--writes", type=int, default=3, help="Controlled NVS samples (1..4)")
     parser.add_argument("--resets", type=int, default=5, help="Software reset samples (1..10)")
+    parser.add_argument("--export", action="store_true", help="Compare explicit TFX1 export with recovered events")
     args = parser.parse_args()
     if not 1 <= args.writes <= 4 or not 1 <= args.resets <= 10:
         parser.error("writes must be 1..4 and resets must be 1..10")
@@ -89,10 +118,12 @@ def main() -> None:
             link.flush()
             read_marker(link, "TF_COMMAND software_reset", 15)
             lines = read_marker(link, "TF_READY", 20)
-            recovery, ram = check_boot(lines, written_sequences)
+            recovery, ram, events = check_boot(lines, written_sequences)
             recovery_us.append(recovery)
             ram_us.append(ram)
             print(f"Physical reset {index + 1}/{args.resets} passed")
+            if args.export and index == args.resets - 1:
+                check_export(link, events)
 
     summarize("NVS write", write_us)
     summarize("NVS recovery", recovery_us)
