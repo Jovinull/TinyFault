@@ -34,9 +34,9 @@ void loop() {}
 
 `readSlot` returns 1 for a complete 24-byte slot, 0 for an absent slot, or a negative value for an I/O error. `writeSlot` returns 1 only when the complete write succeeds. Call `get(index, event)` from index zero for oldest retained event. See the ESP32 example for a complete persistent backend.
 
-The separate [ESP32Diagnostics example](examples/ESP32Diagnostics/ESP32Diagnostics.ino) prints `TF_BOOT`, `TF_RECOVERY`, `TF_EVENT`, and `TF_RAM_RECORD` lines. It records one boot event in a fresh NVS namespace, then reads without further writes on later boots. The RAM measurement records 10,000 events without storage writes; it is a bench measurement, not a guaranteed timing bound. Sending `r` at 115200 baud requests a software reset. It uses no network or credentials. Upload it only to a board whose existing firmware may be replaced. Its `TF_BOOT reason` describes the last reset as reported by ESP-IDF, including `unknown` when unavailable.
+The separate [ESP32Diagnostics example](examples/ESP32Diagnostics/ESP32Diagnostics.ino) prints `TF_BOOT`, `TF_RECOVERY`, `TF_EVENT`, and `TF_RAM_RECORD` lines. It records one boot event in a fresh NVS namespace, then reads without further writes on later boots. The RAM measurement records 10,000 events without storage writes; it is a bench measurement, not a guaranteed timing bound. At 115200 baud, `w` explicitly stores an event (at most eight per boot), and `r` requests a software reset. It uses no network or credentials. Upload it only to a board whose existing firmware may be replaced. Its `TF_BOOT reason` describes the last reset as reported by ESP-IDF, including `unknown` when unavailable.
 
-After an authorized hardware upload and first successful boot, `python tests/hardware_diagnostics.py --port <confirmed-port>` uses optional PySerial 3.5 to request one software reset and checks the recovered boot event and native reset classification. Opening a serial port may itself reset some boards. This command is not part of CI and does not upload firmware.
+After an authorized hardware upload and first successful boot, `python tests/hardware_diagnostics.py --port <confirmed-port>` uses optional PySerial 3.5 to make three explicit NVS writes and request five software resets. It checks the recovered sequence, stored values, reset classification, and operation times. Opening a serial port may itself reset some boards. This command is not part of CI and does not upload firmware.
 
 ## Build and verify
 
@@ -60,8 +60,10 @@ The optional [QEMU smoke test](tests/qemu_smoke.py) starts the ESP32 firmware tw
 | ESP32 reset diagnostics in QEMU | Emulator Tested: SDK power-on and software reset reasons, NVS boot event recovery |
 | ESP32-S3 Arduino | Build Verified with core 3.3.12; execution untested |
 | ESP32-C3 Arduino | Build Verified with core 3.3.12; execution untested |
-| ESP32 physical board | Not tested |
+| ESP32 DevKit V1, ESP32-D0WDQ6, 4 MiB | Hardware Verified: three NVS writes recovered across five software resets; native reset reason 3/software observed; ROM bootloader remained accessible |
 | ESP-IDF, RP2040/RP2350, AVR, STM32 | Not supported yet |
+
+On the tested board, three explicit NVS writes took 1,270–1,550 µs (median 1,275 µs). Recovery of four records across five boots took 3,223–3,229 µs (median 3,224 µs). A batch of 10,000 RAM-only records took 5,168–5,169 µs. These are observations from one board and one firmware configuration, not latency guarantees. A local Arduino build of the diagnostics sketch occupies 279,672 bytes of flash and 22,236 bytes of globals; a separate RAM-only comparison measured an incremental 1,144 bytes of flash and 96 bytes of globals for TinyFault. The latter excludes the NVS backend. Power loss during a write, watchdog resets, panic and brownout were not physically tested.
 
 The on-media format is experimental in 0.1.0. All integers are little endian, independent of structure layout. It is 24 bytes: magic `0x5446` (2), version `1` (1), length `24` (1), sequence (4), ID (2), reserved zero (2), value (4), timestamp ms (4), CRC of the first 20 bytes (4). The storage backend provides slots `0..capacity-1`; slot index is `sequence % capacity`. Changing capacity may lose history. Writes must complete before a reset to be recoverable.
 
