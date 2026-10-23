@@ -1,0 +1,56 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  native:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+      - name: Build
+        run: cmake --build build --parallel
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+  sanitizers:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=clang -DCMAKE_C_FLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer' -DCMAKE_EXE_LINKER_FLAGS='-fsanitize=address,undefined'
+      - name: Build
+        run: cmake --build build --parallel
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+  arduino-esp32:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-arduino-cli@v2
+        with:
+          version: '1.5.1'
+      - name: Install ESP32 core
+        run: |
+          arduino-cli core update-index --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli core install esp32:esp32@3.3.12 --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+      - name: Compile example
+        run: arduino-cli compile --fqbn esp32:esp32:esp32:FlashMode=dio,FlashFreq=40 --libraries "$GITHUB_WORKSPACE/.." --build-path "$RUNNER_TEMP/tinyfault-arduino" --warnings all examples/ESP32PersistentEvents
+      - name: Compile ESP32-S3 example
+        run: arduino-cli compile --fqbn esp32:esp32:esp32s3 --libraries "$GITHUB_WORKSPACE/.." --build-path "$RUNNER_TEMP/tinyfault-arduino-s3" --warnings all examples/ESP32PersistentEvents
+      - name: Compile ESP32-C3 example
+        run: arduino-cli compile --fqbn esp32:esp32:esp32c3 --libraries "$GITHUB_WORKSPACE/.." --build-path "$RUNNER_TEMP/tinyfault-arduino-c3" --warnings all examples/ESP32PersistentEvents
+      - name: Install Espressif QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgcrypt20 libglib2.0-0 libpixman-1-0 libsdl2-2.0-0 libslirp0
+          curl -fL --retry 3 -o "$RUNNER_TEMP/qemu.tar.xz" https://github.com/espressif/qemu/releases/download/esp-develop-9.2.2-20260417/qemu-xtensa-softmmu-esp_develop_9.2.2_20260417-x86_64-linux-gnu.tar.xz
+          echo "0eecb2a34a5586c0e59110f77b9343b7b336e82fdb0e1a30e1dc1bab8a547e35  $RUNNER_TEMP/qemu.tar.xz" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/tinyfault-qemu"
+          tar -xf "$RUNNER_TEMP/qemu.tar.xz" -C "$RUNNER_TEMP/tinyfault-qemu"
+      - name: Test recovery in QEMU
+        run: |
+          QEMU_BIN=$(find "$RUNNER_TEMP/tinyfault-qemu" -name qemu-system-xtensa -type f -print -quit)
+          test -n "$QEMU_BIN"
+          python3 tests/qemu_smoke.py --qemu "$QEMU_BIN" --image "$RUNNER_TEMP/tinyfault-arduino/ESP32PersistentEvents.ino.merged.bin"
