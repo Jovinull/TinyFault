@@ -146,17 +146,21 @@ static void testRecoveryAndLifetime() {
     CHECK(recorder.record(7, 123, 42) == TF_OK);
     CHECK(fake.committed["events"]["s1"].size() == TF_RECORD_SIZE);
     storage.close();
+    CHECK(storage.open("other") == ESP_ERR_INVALID_STATE);
     CHECK(recorder.record(8, 456, 43) == TF_STORAGE_ERROR);
     CHECK(storage.lastError() == ESP_ERR_INVALID_STATE);
     CHECK(recorder.count() == 1u);
-    CHECK(storage.open("events") == ESP_OK);
+    CHECK(storage.open("events") == ESP_ERR_INVALID_STATE);
+    CHECK(fake.committed["other"].empty());
+    TinyFaultNvsStorage reopened;
+    CHECK(reopened.open("events") == ESP_OK);
     TinyFaultRecorder<4> recovered;
-    CHECK(storage.begin(recovered) == TF_OK);
+    CHECK(reopened.begin(recovered) == TF_OK);
     CHECK(recovered.count() == 1u);
     tf_event event;
     CHECK(recovered.get(0, event));
     CHECK(event.sequence == 1u && event.id == 7u && event.value == 123u);
-    CHECK(storage.open("other") == ESP_ERR_INVALID_STATE);
+    CHECK(reopened.open("other") == ESP_ERR_INVALID_STATE);
 }
 
 static void testPreviousBackendAndCapacity() {
@@ -182,9 +186,10 @@ static void testPreviousBackendAndCapacity() {
     CHECK(changed_capacity.count() == 1u);
     CHECK(changed_capacity.get(0, event) && event.sequence == 4u);
     storage.close();
-    CHECK(storage.open("different") == ESP_OK);
+    TinyFaultNvsStorage separate_storage;
+    CHECK(separate_storage.open("different") == ESP_OK);
     TinyFaultRecorder<4> separate;
-    CHECK(storage.begin(separate) == TF_OK && separate.count() == 0u);
+    CHECK(separate_storage.begin(separate) == TF_OK && separate.count() == 0u);
 }
 
 static void testFailures() {
@@ -215,9 +220,22 @@ static void testFailures() {
     CHECK(storage.begin(recovered) == TF_OK && recovered.count() == 1u);
 }
 
+static void testCallbackLease() {
+    resetFake();
+    TinyFaultNvsStorage storage;
+    CHECK(storage.open("lease") == ESP_OK);
+    tf_storage callbacks = storage.callbacks();
+    storage.close();
+    CHECK(storage.open("other") == ESP_ERR_INVALID_STATE);
+    uint8_t bytes[TF_RECORD_SIZE] = {};
+    CHECK(callbacks.write(callbacks.context, 0, bytes) < 0);
+    CHECK(fake.committed["other"].empty());
+}
+
 int main() {
     testNamesAndOpen();
     testRecoveryAndLifetime();
     testPreviousBackendAndCapacity();
     testFailures();
+    testCallbackLease();
 }

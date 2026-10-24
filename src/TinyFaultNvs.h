@@ -13,6 +13,7 @@
 class TinyFaultNvsStorage {
     nvs_handle_t handle_{};
     bool open_ = false;
+    bool bound_ = false;
     esp_err_t last_error_ = ESP_OK;
 
     static void slotKey(size_t slot, char key[16]) {
@@ -64,7 +65,7 @@ class TinyFaultNvsStorage {
     TinyFaultNvsStorage &operator=(const TinyFaultNvsStorage &) = delete;
 
     esp_err_t open(const char *name) {
-        if (open_)
+        if (open_ || bound_)
             return last_error_ = ESP_ERR_INVALID_STATE;
         if (!name || !name[0] || strlen(name) > 15u)
             return last_error_ = ESP_ERR_NVS_INVALID_NAME;
@@ -87,6 +88,7 @@ class TinyFaultNvsStorage {
     esp_err_t lastError() const { return last_error_; }
 
     tf_storage callbacks() {
+        bound_ = true;
         const tf_storage storage = {this, readSlot, writeSlot};
         return storage;
     }
