@@ -1,6 +1,7 @@
 """Decode an explicit TinyFault TFX1 serial export locally."""
 
 import argparse
+import itertools
 import json
 import re
 import secrets
@@ -14,8 +15,13 @@ EVENT = re.compile(
     r"value=(0|[1-9][0-9]*) ms=(0|[1-9][0-9]*)\Z"
 )
 END = re.compile(r"TFX1 END(?: req=([0-9A-F]{8}))? count=(0|[1-9][0-9]*) crc32=([0-9A-F]{8})\Z")
+META = re.compile(
+    r"(TFI1 META(?: req=([0-9A-F]{8}))? platform=(esp32|avr) "
+    r"reset=([a-z_]{1,24}) native=(-?(?:0|[1-9][0-9]*)) "
+    r"trust=(observed|unverified)) crc32=([0-9A-F]{8})\Z"
+)
 MAX_EVENTS = 100000
-MAX_LINE = 96
+MAX_LINE = 128
 
 
 class ExportError(ValueError):
@@ -80,6 +86,35 @@ def parse(lines, expected_request: str | None = None) -> list[dict[str, int]]:
     raise ExportError("missing TFX1 END")
 
 
+def parse_incident(lines, expected_request: str | None = None) -> dict:
+    iterator = iter(lines)
+    first = next(iterator, None)
+    if first is None:
+        raise ExportError("missing export header")
+    if not first.startswith("TFI"):
+        events = parse(itertools.chain((first,), iterator), expected_request=expected_request)
+        return {"format": "TFX1", "count": len(events), "events": events}
+    if len(first) > MAX_LINE:
+        raise ExportError("incident metadata line is too long")
+    match = META.fullmatch(first.rstrip("\r\n"))
+    if match is None:
+        raise ExportError("invalid or unsupported incident metadata")
+    if expected_request is not None and match.group(2) != expected_request:
+        raise ExportError("incident belongs to another request")
+    if int(match.group(7), 16) != zlib.crc32(match.group(1).encode("ascii")):
+        raise ExportError("incident metadata CRC-32 mismatch")
+    native = int(match.group(5))
+    if native < -0x80000000 or native > 0x7fffffff:
+        raise ExportError("native reset code exceeds signed 32-bit range")
+    if match.group(6) == "unverified" and match.group(4) != "unknown":
+        raise ExportError("unverified reset cannot be classified")
+    events = parse(iterator, expected_request=match.group(2))
+    return {"format": "TFI1", "reset": {
+        "platform": match.group(3), "reason": match.group(4),
+        "native": native, "evidence": match.group(6)},
+        "count": len(events), "events": events}
+
+
 def bounded_lines(source):
     while True:
         raw = source.readline(MAX_LINE + 1)
@@ -114,6 +149,7 @@ def capture(port: str, timeout: float) -> tuple[list[str], str]:
         link.flush()
         deadline = time.monotonic() + timeout
         started = False
+        seen_meta = False
         while time.monotonic() < deadline:
             raw = link.read_until(b"\n", MAX_LINE + 1)
             if len(raw) > MAX_LINE:
@@ -124,6 +160,13 @@ def capture(port: str, timeout: float) -> tuple[list[str], str]:
             if not started:
                 if line.startswith("TF_READY"):
                     raise ExportError("device became ready after request; retry capture")
+                if line.startswith("TFI"):
+                    header = META.fullmatch(line)
+                    if seen_meta or header is None or header.group(2) != request:
+                        raise ExportError("stale or invalid incident response")
+                    seen_meta = True
+                    lines.append(line)
+                    continue
                 if line.startswith("TFX"):
                     header = BEGIN.fullmatch(line)
                     if header is None or header.group(1) != request:
@@ -132,7 +175,7 @@ def capture(port: str, timeout: float) -> tuple[list[str], str]:
                 else:
                     continue
             lines.append(line)
-            if len(lines) > MAX_EVENTS + 2:
+            if len(lines) > MAX_EVENTS + 3:
                 raise ExportError("serial export exceeds event limit")
             if line.startswith("TFX1 END"):
                 return lines, request
@@ -153,24 +196,32 @@ def main() -> int:
     try:
         if args.port:
             lines, request = capture(args.port, args.timeout)
-            events = parse(lines, expected_request=request)
+            report = parse_incident(lines, expected_request=request)
         elif args.input == "-":
-            events = parse(bounded_lines(sys.stdin))
+            report = parse_incident(bounded_lines(sys.stdin))
         else:
             with open(args.input, encoding="ascii") as source:
-                events = parse(bounded_lines(source))
+                report = parse_incident(bounded_lines(source))
     except (ExportError, OSError, UnicodeError) as exc:
         print(f"TinyFault export error: {exc}", file=sys.stderr)
         return 2
     if args.json:
-        print(json.dumps({"format": "TFX1", "count": len(events), "events": events}))
+        print(json.dumps(report))
     else:
-        print(f"TFX1: {len(events)} event(s)")
-        for event in events:
+        if report["format"] == "TFI1":
+            reset = report["reset"]
+            print(f"TFI1: platform={reset['platform']} reset={reset['reason']} "
+                  f"native={reset['native']} evidence={reset['evidence']}")
+        else:
+            print("TFX1: reset information unavailable")
+        print(f"Observed persisted events: {report['count']}")
+        for event in report["events"]:
             print(
                 f"seq={event['sequence']} id={event['id']} value={event['value']} "
                 f"ms={event['timestamp_ms']}"
             )
+        print("Cause and completion of unrecorded operations: unknown")
+        print("Timestamps are relative to the boot that recorded each event")
     return 0
 
 

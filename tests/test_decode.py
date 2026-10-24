@@ -9,7 +9,7 @@ from unittest import mock
 import zlib
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from tools.tinyfault_decode import ExportError, capture, parse
+from tools.tinyfault_decode import ExportError, capture, parse, parse_incident
 
 FIXTURE_BINARY = None
 
@@ -26,7 +26,39 @@ def frame(events, request=None):
     return "\n".join(lines) + "\n"
 
 
+def incident_frame(events, request="A1B2C3D4", reset="software", trust="observed"):
+    tag = f" req={request}" if request else ""
+    prefix = f"TFI1 META{tag} platform=esp32 reset={reset} native=3 trust={trust}"
+    return f"{prefix} crc32={zlib.crc32(prefix.encode('ascii')):08X}\n" + frame(events, request)
+
+
 class DecodeTests(unittest.TestCase):
+    def test_incident_metadata_and_legacy(self):
+        data = incident_frame([(1, 0x1001, 7, 100)])
+        report = parse_incident(data.splitlines(), expected_request="A1B2C3D4")
+        self.assertEqual(report["reset"], {"platform": "esp32", "reason": "software",
+                                           "native": 3, "evidence": "observed"})
+        self.assertEqual(report["events"][0]["id"], 0x1001)
+        self.assertEqual(parse_incident(frame([]).splitlines())["format"], "TFX1")
+        for bad in (data.replace("native=3", "native=4"),
+                    data.replace("TFI1 META", "TFI2 META"),
+                    data.replace("req=A1B2C3D4", "req=DEADBEEF", 1),
+                    data.replace("trust=observed", "trust=unverified"),
+                    data[:-30]):
+            with self.subTest(bad=bad[:60]), self.assertRaises(ExportError):
+                parse_incident(bad.splitlines(), expected_request="A1B2C3D4")
+
+    def test_cpp_incident_fixture(self):
+        if FIXTURE_BINARY is None:
+            self.skipTest("C++ fixture binary was not supplied")
+        fixture = subprocess.check_output([FIXTURE_BINARY, "--incident"], text=True)
+        report = parse_incident(fixture.splitlines(), expected_request="A1B2C3D4")
+        self.assertEqual(report["reset"]["reason"], "software")
+        self.assertEqual(report["events"][0]["value"], 7)
+        process = subprocess.run([sys.executable, "tools/tinyfault_decode.py", "--json"],
+                                 input=fixture, capture_output=True, text=True, check=True)
+        self.assertEqual(json.loads(process.stdout), report)
+
     def test_empty_one_full_and_gap(self):
         self.assertEqual(parse(frame([]).splitlines()), [])
         self.assertEqual(parse(frame([(1, 42, 7, 100)]).splitlines())[0]["value"], 7)
@@ -167,6 +199,23 @@ class DecodeTests(unittest.TestCase):
             for _ in range(2):
                 lines, request = capture("COM-test", 1)
                 self.assertEqual(parse(lines, request), [])
+        tagged_incident = incident_frame([(1, 1, 2, 3)])
+        link = FakeSerial([b"TF_READY\n"] +
+                          [line.encode() for line in tagged_incident.splitlines(keepends=True)])
+        fake_serial.Serial = lambda *_args, **_kwargs: link
+        with mock.patch.dict(sys.modules, {"serial": fake_serial}), mock.patch(
+            "secrets.token_hex", return_value="a1b2c3d4"
+        ):
+            lines, request = capture("COM-test", 1)
+            self.assertEqual(parse_incident(lines, request)["count"], 1)
+        stale_incident = FakeSerial([b"TF_READY\n"] +
+                                    [line.encode() for line in incident_frame([], "DEADBEEF").splitlines(keepends=True)])
+        fake_serial.Serial = lambda *_args, **_kwargs: stale_incident
+        with mock.patch.dict(sys.modules, {"serial": fake_serial}), mock.patch(
+            "secrets.token_hex", return_value="a1b2c3d4"
+        ):
+            with self.assertRaisesRegex(ExportError, "stale"):
+                capture("COM-test", 1)
 
 
 if __name__ == "__main__":

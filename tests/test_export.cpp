@@ -1,4 +1,4 @@
-#include <TinyFaultExport.h>
+#include <TinyFaultIncident.h>
 
 #include <cstdlib>
 #include <iostream>
@@ -34,6 +34,14 @@ int main(int argc, char **argv) {
         std::cout << fixture.data;
         return 0;
     }
+    if (argc == 2 && std::string(argv[1]) == "--incident") {
+        CHECK(recorder.record(0x1001u, 7, 100) == TF_OK);
+        Sink fixture;
+        const TinyFaultIncidentMetadata meta = {"esp32", "software", 3, true};
+        CHECK(tinyfaultExportIncident(recorder, fixture, meta, "A1B2C3D4"));
+        std::cout << fixture.data;
+        return 0;
+    }
     Sink empty;
     CHECK(tinyfaultExport(recorder, empty));
     CHECK(empty.data == "TFX1 BEGIN count=0\nTFX1 END count=0 crc32=00000000\n");
@@ -57,4 +65,18 @@ int main(int argc, char **argv) {
     Sink invalid;
     CHECK(!tinyfaultExport(recorder, invalid, "not-hex!"));
     CHECK(invalid.data.empty());
+    const TinyFaultIncidentMetadata meta = {"avr", "unknown", 2, false};
+    Sink incident;
+    CHECK(tinyfaultExportIncident(recorder, incident, meta, "A1B2C3D4"));
+    CHECK(incident.data.find("TFI1 META req=A1B2C3D4 platform=avr reset=unknown native=2 ") == 0u);
+    CHECK(incident.data.find("\nTFX1 BEGIN req=A1B2C3D4 count=2\n") != std::string::npos);
+    Sink failed_meta;
+    failed_meta.fail_after = 1;
+    CHECK(!tinyfaultExportIncident(recorder, failed_meta, meta));
+    Sink bad_meta;
+    const TinyFaultIncidentMetadata invalid_meta = {"avr x", "unknown", 2, false};
+    CHECK(!tinyfaultExportIncident(recorder, bad_meta, invalid_meta));
+    const TinyFaultIncidentMetadata false_claim = {"avr", "external", 2, false};
+    CHECK(!tinyfaultExportIncident(recorder, bad_meta, false_claim));
+    CHECK(bad_meta.data.empty());
 }
