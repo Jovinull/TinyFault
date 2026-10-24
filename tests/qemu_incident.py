@@ -25,12 +25,16 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="tinyfault-incident-", dir=args.image.resolve().parent) as directory:
         flash = Path(directory) / "flash.bin"
         shutil.copyfile(args.image, flash)
+        empty_boot = boot(args.qemu.resolve(), flash, b"TF_READY")
+        require(r"TF_RECOVERY status=0 count=0 us=\d+ ram_count=0", empty_boot)
+        if b"tinyfault-m5" in flash.read_bytes()[0x9000:0xe000]:
+            raise AssertionError("boot created the deferred NVS namespace without a checkpoint")
         first = boot(args.qemu.resolve(), flash, b"TF_READY", ready_command=b"a",
                      command_marker=b"TF_WRITE")
-        require(r"TF_RECOVERY count=0", first)
-        require(r"TF_WRITE status=0 id=4097 count=1", first)
+        require(r"TF_RECOVERY status=0 count=0 us=\d+ ram_count=0", first)
+        require(r"TF_WRITE status=0 id=4097 seq=1 value=1 ms=\d+ us=\d+ count=1 nvs=0", first)
         second = boot(args.qemu.resolve(), flash, b"TF_READY")
-        require(r"TF_RECOVERY count=1", second)
+        require(r"TF_RECOVERY status=0 count=1 us=\d+ ram_count=0", second)
         require(r"TF_EVENT seq=1 id=4097 value=1 ms=\d+", second)
         if "TF_WRITE" in second:
             raise AssertionError("recovery unexpectedly persisted an event")
