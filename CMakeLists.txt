@@ -52,4 +52,7 @@ if(BUILD_TESTING)
   add_test(NAME tinyfault_decode_tests COMMAND ${Python3_EXECUTABLE}
            ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_decode.py $<TARGET_FILE:tinyfault_export_tests>)
   set_tests_properties(tinyfault_decode_tests PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+  add_test(NAME tinyfault_hardware_avr_tests COMMAND ${Python3_EXECUTABLE}
+           ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_hardware_avr.py)
+  set_tests_properties(tinyfault_hardware_avr_tests PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 endif()

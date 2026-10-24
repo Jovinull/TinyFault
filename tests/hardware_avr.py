@@ -10,8 +10,6 @@ import secrets
 import sys
 import time
 
-import serial
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tools.tinyfault_decode import parse
 
@@ -111,6 +109,10 @@ def benchmark_ram(link, samples=5):
 
 
 def main():
+    try:
+        import serial
+    except ImportError as exc:
+        raise SystemExit("PySerial is required for the physical AVR test") from exc
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", required=True, help="confirmed, authorized Nano serial port")
     args = parser.parse_args()
