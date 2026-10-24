@@ -57,7 +57,7 @@ void setup() {
 void loop() {}
 ```
 
-The namespace must be 1–15 characters. The adapter uses keys `s0`, `s1`, ... and the same 24-byte v1 records as the earlier examples: existing records are readable when namespace and capacity match. Keep `storage` alive and open while `recorder` uses it; the adapter owns and closes its NVS handle, cannot be copied or moved, and does not erase NVS. `lastError()` provides the ESP-IDF error after a storage failure. For a custom backend, pass a `tf_storage` to `recorder.begin()` or use the C API in [tf_core.h](src/tf_core.h).
+The namespace must be 1–15 characters. The adapter uses keys `s0`, `s1`, ... and the same 24-byte v1 records as the earlier examples: existing records are readable when namespace and capacity match. Keep `storage` alive and open while `recorder` uses it; the adapter owns and closes its NVS handle, cannot be copied or moved, and does not erase NVS. Once its callbacks have been given to a recorder, closing that storage object permanently prevents reopening it: create a new storage object for another namespace. This prevents an old recorder from silently writing to the new namespace. `lastError()` provides the ESP-IDF error after a storage failure. For a custom backend, pass a `tf_storage` to `recorder.begin()` or use the C API in [tf_core.h](src/tf_core.h).
 
 NVS commits each successful event write, so write frequency affects flash wear and latency. The adapter itself never formats NVS; Arduino ESP32 core 3.3.12 [initializes NVS and may erase its partition on specific initialization errors](https://github.com/espressif/arduino-esp32/blob/3.3.12/cores/esp32/esp32-hal-misc.c). Neither NVS nor the adapter promises zero heap use. The zero-heap guarantee applies to TinyFault's portable core. Do not store secrets in event values unless your application's storage and export path protect them.
 
@@ -81,9 +81,9 @@ TFX1 EVENT seq=7 id=42 value=3 ms=1200
 TFX1 END count=1 crc32=260FC03B
 ```
 
-The final CRC-32/ISO-HDLC covers each complete `TFX1 EVENT` line including its `\n`, in order. `BEGIN` and `END` counts must equal the number of events. A sequence gap is reported as received; no missing event is invented. An absent `END`, mismatched count, invalid line, unsupported version, or CRC mismatch is an error. This detects accidental transfer errors, not malicious changes. Export can reveal application data to anyone with serial access.
+The final CRC-32/ISO-HDLC covers each complete `TFX1 EVENT` line including its `\n`, in order. `BEGIN` and `END` counts must equal the number of events. A sequence gap is reported as received; no missing event is invented. An absent `END`, mismatched count, invalid line, unsupported version, or CRC mismatch is an error. For direct capture, the tool sends one `X` request with an eight-digit random identifier; `BEGIN` and `END` echo it as `req=XXXXXXXX`. The tool rejects responses for another request. Manual `x` exports remain untagged. Request IDs distinguish transfers; they do not authenticate them. Export can reveal application data to anyone with serial access.
 
-Save a complete transfer to a local text file, then run `python tools/tinyfault_decode.py export.txt` or add `--json`. The decoder uses only Python's standard library and makes no network requests. With optional PySerial, `python tools/tinyfault_decode.py --port <confirmed-port> --json` requests `x` and captures the transfer directly. Opening a serial port may reset some boards; the tool waits for startup and rejects incomplete transfers. It does not upload firmware.
+Save a complete transfer to a local text file, then run `python tools/tinyfault_decode.py export.txt` or add `--json`. The decoder uses only Python's standard library and makes no network requests. With optional PySerial, `python tools/tinyfault_decode.py --port <confirmed-port> --json` sends one tagged request and captures the matching transfer. Opening a serial port may reset some boards; the tool waits for startup and rejects incomplete transfers. It does not upload firmware.
 
 ## Build and evidence
 
@@ -100,11 +100,10 @@ CMake builds the C11 core and C++11 integration tests. Python 3 is required for 
 | Native host | CTest in Debug, Release, and with sanitizers |
 | ESP32 classic Arduino | Build Verified; NVS recovery and export tested in QEMU |
 | ESP32-S3 and ESP32-C3 Arduino | Build Verified only; execution untested |
-| TF-B01 ESP32 DevKit V1 | Hardware Verified for the M2 firmware: NVS recovery across five software resets and native reset reason 3/software |
-| New M3 adapter and export on TF-B01 | Physical validation pending authorization for a new firmware upload |
+| TF-B01 ESP32 DevKit V1 | Hardware Verified with M3 firmware: compatible M2 records recovered unchanged, NVS recovery across five software resets, native reset reason 3/software, and tagged serial export decoded to JSON |
 | ESP-IDF standalone, RP2040/RP2350, AVR, STM32 | Not supported yet |
 
-The M2 firmware on TF-B01 measured three NVS commits at 1,270–1,550 µs (median 1,275 µs), recovery of four events at 3,223–3,229 µs (median 3,224 µs), and 10,000 RAM records at 5,168–5,169 µs per batch. A separate RAM-only comparison measured +1,144 flash bytes and +96 global bytes; it excludes the NVS adapter. Matched local builds of the complete M2 and M3 diagnostics sketches measured 279,640/22,236 and 280,480/22,244 bytes of flash/globals respectively: +840 flash and +8 globals for the changed sketch, including export. These are observations, not latency or endurance guarantees. M3 firmware timing will require a new authorized hardware upload.
+On TF-B01, the M3 firmware recovered four M2 records unchanged before writing. Three explicit NVS writes took 2,147, 5,238, and 71,412 µs; five recoveries of four records took 3,152–3,154 µs. Five batches of 10,000 RAM records took 5,127–5,128 µs each. Five complete serial capture and decode calls took 1,296.3–1,306.9 ms each, including serial port startup; this is not pure device export latency. With the same ESP32 core and board settings, the complete diagnostics sketch grew from M2's 279,640 flash/22,236 global bytes to M3's 280,964 flash/22,260 global bytes: +1,324 flash/+24 global bytes. This delta includes the new diagnostics and serial protocol, and does not isolate the NVS adapter. These observations from one board are not worst-case latency, wear, or endurance guarantees.
 
 The on-media v1 format is experimental in 0.1.0: 24 little-endian bytes containing magic `0x5446`, version, length, sequence, ID, reserved bytes, value, timestamp, and CRC-32/ISO-HDLC. A valid unknown version blocks recovery with `TF_UNSUPPORTED_FORMAT`. Changing recorder capacity can lose history. A partial overwrite can remove an older event; a backend that reports failure after commit may leave an event recoverable after reboot. The recorder is not safe for simultaneous access from multiple tasks or interrupts. Sequence numbers stop at `UINT32_MAX`.
 
