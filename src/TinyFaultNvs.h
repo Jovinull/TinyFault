@@ -14,7 +14,25 @@ class TinyFaultNvsStorage {
     nvs_handle_t handle_{};
     bool open_ = false;
     bool bound_ = false;
+    bool has_handle_ = false;
+    bool writable_ = false;
+    char deferred_name_[16]{};
     esp_err_t last_error_ = ESP_OK;
+
+    esp_err_t ensureWritable() {
+        if (writable_)
+            return ESP_OK;
+        nvs_handle_t writable_handle{};
+        const esp_err_t result = nvs_open(deferred_name_, NVS_READWRITE, &writable_handle);
+        if (result != ESP_OK)
+            return result;
+        if (has_handle_)
+            nvs_close(handle_);
+        handle_ = writable_handle;
+        has_handle_ = true;
+        writable_ = true;
+        return ESP_OK;
+    }
 
     static void slotKey(size_t slot, char key[16]) {
         snprintf(key, 16, "s%u", static_cast<unsigned>(slot));
@@ -25,6 +43,10 @@ class TinyFaultNvsStorage {
         if (!self->open_) {
             self->last_error_ = ESP_ERR_INVALID_STATE;
             return -1;
+        }
+        if (!self->has_handle_) {
+            self->last_error_ = ESP_OK;
+            return 0;
         }
         char key[16];
         slotKey(slot, key);
@@ -49,6 +71,9 @@ class TinyFaultNvsStorage {
             self->last_error_ = ESP_ERR_INVALID_STATE;
             return -1;
         }
+        self->last_error_ = self->ensureWritable();
+        if (self->last_error_ != ESP_OK)
+            return -1;
         char key[16];
         slotKey(slot, key);
         self->last_error_ = nvs_set_blob(self->handle_, key, data, TF_RECORD_SIZE);
@@ -74,14 +99,39 @@ class TinyFaultNvsStorage {
         if (last_error_ == ESP_OK) {
             handle_ = handle;
             open_ = true;
+            has_handle_ = true;
+            writable_ = true;
         }
         return last_error_;
     }
 
+    // Opening a missing namespace read-only does not create it. The first
+    // explicit write promotes the handle and may create the namespace.
+    esp_err_t openDeferred(const char *name) {
+        if (open_ || bound_)
+            return last_error_ = ESP_ERR_INVALID_STATE;
+        if (!name || !name[0] || strlen(name) > 15u)
+            return last_error_ = ESP_ERR_NVS_INVALID_NAME;
+        nvs_handle_t handle{};
+        last_error_ = nvs_open(name, NVS_READONLY, &handle);
+        if (last_error_ != ESP_OK && last_error_ != ESP_ERR_NVS_NOT_FOUND)
+            return last_error_;
+        if (last_error_ == ESP_OK) {
+            handle_ = handle;
+            has_handle_ = true;
+        }
+        memcpy(deferred_name_, name, strlen(name) + 1u);
+        open_ = true;
+        last_error_ = ESP_OK;
+        return ESP_OK;
+    }
+
     void close() {
-        if (open_)
+        if (has_handle_)
             nvs_close(handle_);
         open_ = false;
+        has_handle_ = false;
+        writable_ = false;
     }
 
     bool isOpen() const { return open_; }

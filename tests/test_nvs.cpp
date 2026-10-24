@@ -25,6 +25,7 @@ static_assert(!std::is_move_constructible<TinyFaultRecorder<4>>::value,
 struct FakeNvs {
     std::map<std::string, std::map<std::string, std::vector<uint8_t>>> committed;
     std::map<nvs_handle_t, std::string> handles;
+    std::map<nvs_handle_t, nvs_open_mode_t> modes;
     std::map<nvs_handle_t, std::map<std::string, std::vector<uint8_t>>> staged;
     nvs_handle_t next_handle = 1;
     esp_err_t open_error = ESP_OK;
@@ -34,20 +35,28 @@ struct FakeNvs {
     bool apply_before_commit_error = false;
     unsigned open_calls = 0;
     unsigned close_calls = 0;
+    unsigned namespace_creations = 0;
 } fake;
 
 esp_err_t nvs_open(const char *name, nvs_open_mode_t mode, nvs_handle_t *handle) {
     ++fake.open_calls;
     if (fake.open_error != ESP_OK)
         return fake.open_error;
-    CHECK(mode == NVS_READWRITE);
+    if (mode == NVS_READONLY && fake.committed.find(name) == fake.committed.end())
+        return ESP_ERR_NVS_NOT_FOUND;
+    if (mode == NVS_READWRITE && fake.committed.find(name) == fake.committed.end()) {
+        fake.committed[name] = {};
+        ++fake.namespace_creations;
+    }
     *handle = fake.next_handle++;
     fake.handles[*handle] = name;
+    fake.modes[*handle] = mode;
     return ESP_OK;
 }
 
 void nvs_close(nvs_handle_t handle) {
     CHECK(fake.handles.erase(handle) == 1u);
+    fake.modes.erase(handle);
     fake.staged.erase(handle);
     ++fake.close_calls;
 }
@@ -74,6 +83,8 @@ esp_err_t nvs_set_blob(nvs_handle_t handle, const char *key, const void *data, s
     if (fake.write_error != ESP_OK)
         return fake.write_error;
     if (fake.handles.find(handle) == fake.handles.end())
+        return ESP_ERR_INVALID_STATE;
+    if (fake.modes[handle] != NVS_READWRITE)
         return ESP_ERR_INVALID_STATE;
     const uint8_t *bytes = static_cast<const uint8_t *>(data);
     fake.staged[handle][key] = std::vector<uint8_t>(bytes, bytes + length);
@@ -232,10 +243,39 @@ static void testCallbackLease() {
     CHECK(fake.committed["other"].empty());
 }
 
+static void testDeferredNamespace() {
+    resetFake();
+    TinyFaultNvsStorage storage;
+    CHECK(storage.openDeferred(nullptr) == ESP_ERR_NVS_INVALID_NAME);
+    CHECK(storage.openDeferred("new-events") == ESP_OK);
+    TinyFaultRecorder<4> recorder;
+    CHECK(storage.begin(recorder) == TF_OK);
+    CHECK(recorder.count() == 0u && fake.namespace_creations == 0u);
+    CHECK(fake.committed.find("new-events") == fake.committed.end());
+    fake.open_error = ESP_ERR_NVS_TEST_IO;
+    CHECK(recorder.record(1, 2, 3) == TF_STORAGE_ERROR);
+    CHECK(storage.lastError() == ESP_ERR_NVS_TEST_IO);
+    CHECK(recorder.count() == 0u && fake.namespace_creations == 0u);
+    fake.open_error = ESP_OK;
+    CHECK(recorder.record(1, 2, 3) == TF_OK);
+    CHECK(fake.namespace_creations == 1u && fake.committed["new-events"]["s1"].size() ==
+                                                TF_RECORD_SIZE);
+    storage.close();
+    TinyFaultNvsStorage reopened;
+    CHECK(reopened.openDeferred("new-events") == ESP_OK);
+    TinyFaultRecorder<4> recovered;
+    CHECK(reopened.begin(recovered) == TF_OK && recovered.count() == 1u);
+    CHECK(fake.namespace_creations == 1u);
+    CHECK(recovered.record(2, 3, 4) == TF_OK && fake.namespace_creations == 1u);
+    reopened.close();
+    CHECK(recovered.record(3, 4, 5) == TF_STORAGE_ERROR);
+}
+
 int main() {
     testNamesAndOpen();
     testRecoveryAndLifetime();
     testPreviousBackendAndCapacity();
     testFailures();
     testCallbackLease();
+    testDeferredNamespace();
 }
