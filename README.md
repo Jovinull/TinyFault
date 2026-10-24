@@ -1,6 +1,6 @@
 # TinyFault
 
-TinyFault records events that firmware explicitly reports. Its bounded C11 core works offline, uses no heap, and can recover completed writes from optional storage. On Arduino ESP32, the library provides a reusable NVS adapter, reset reason lookup, and an explicit serial export for local analysis.
+TinyFault records events that firmware explicitly reports. Its bounded C11 core works offline, uses no heap, and can recover completed writes from optional storage. Arduino ESP32 has a reusable NVS adapter and reset reason lookup. Arduino AVR has a bounded EEPROM adapter with build validation pending physical tests. Both can export events explicitly over an available serial connection for local analysis.
 
 TinyFault does not automatically capture crashes or watchdog failures. A reset reason describes what ESP-IDF observed; it is not a root-cause diagnosis or a replacement for an ESP-IDF core dump.
 
