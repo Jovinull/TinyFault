@@ -44,6 +44,8 @@ jobs:
         run: arduino-cli compile --fqbn arduino:avr:nano:cpu=atmega328 --libraries "$GITHUB_WORKSPACE/.." --build-path "$RUNNER_TEMP/tinyfault-nano-eeprom" --warnings all examples/AVREepromRecorder
       - name: Compile old bootloader selection
         run: arduino-cli compile --fqbn arduino:avr:nano:cpu=atmega328old --libraries "$GITHUB_WORKSPACE/.." --build-path "$RUNNER_TEMP/tinyfault-nano-old" --warnings all examples/AVREepromRecorder
+      - name: Compile Nano incident example
+        run: arduino-cli compile --fqbn arduino:avr:nano:cpu=atmega328old --libraries "$GITHUB_WORKSPACE/.." --build-path "$RUNNER_TEMP/tinyfault-nano-incident" --warnings all examples/AVRIncidentDiagnostics
       - name: Install Adafruit AVR core
         run: |
           arduino-cli core update-index --additional-urls https://adafruit.github.io/arduino-board-index/package_adafruit_index.json
@@ -52,6 +54,7 @@ jobs:
         run: |
           arduino-cli compile --fqbn adafruit:avr:protrinket5 --libraries "$GITHUB_WORKSPACE/.." --build-path "$RUNNER_TEMP/tinyfault-trinket-ram" examples/MinimalRecorder
           arduino-cli compile --fqbn adafruit:avr:protrinket5 --libraries "$GITHUB_WORKSPACE/.." --build-path "$RUNNER_TEMP/tinyfault-trinket-eeprom" examples/AVREepromRecorder
+          arduino-cli compile --fqbn adafruit:avr:protrinket5 --libraries "$GITHUB_WORKSPACE/.." --build-path "$RUNNER_TEMP/tinyfault-trinket-incident" examples/AVRIncidentDiagnostics
       - name: Validate Nano ZIP consumer
         run: |
           mkdir -p "$RUNNER_TEMP/avr-package/TinyFault" "$RUNNER_TEMP/avr-consumer"
@@ -61,6 +64,8 @@ jobs:
           arduino-cli lib install --zip-path "$RUNNER_TEMP/TinyFault-AVR.zip"
           cp -R examples/AVREepromRecorder "$RUNNER_TEMP/avr-consumer/"
           arduino-cli compile --fqbn arduino:avr:nano:cpu=atmega328 --build-path "$RUNNER_TEMP/tinyfault-nano-installed" "$RUNNER_TEMP/avr-consumer/AVREepromRecorder"
+          cp -R examples/AVRIncidentDiagnostics "$RUNNER_TEMP/avr-consumer/"
+          arduino-cli compile --fqbn arduino:avr:nano:cpu=atmega328old --build-path "$RUNNER_TEMP/tinyfault-nano-incident-installed" "$RUNNER_TEMP/avr-consumer/AVRIncidentDiagnostics"
   arduino-esp32:
     runs-on: ubuntu-24.04
     steps:
@@ -82,6 +87,8 @@ jobs:
         run: arduino-cli compile --fqbn esp32:esp32:esp32c3 --libraries "$GITHUB_WORKSPACE/.." --build-path "$RUNNER_TEMP/tinyfault-arduino-c3" --warnings all examples/ESP32PersistentRecorder
       - name: Compile diagnostics example
         run: arduino-cli compile --fqbn esp32:esp32:esp32:FlashMode=dio,FlashFreq=40 --libraries "$GITHUB_WORKSPACE/.." --build-path "$RUNNER_TEMP/tinyfault-diagnostics" --warnings all examples/ESP32Diagnostics
+      - name: Compile incident example
+        run: arduino-cli compile --fqbn esp32:esp32:esp32:FlashMode=dio,FlashFreq=40 --libraries "$GITHUB_WORKSPACE/.." --build-path "$RUNNER_TEMP/tinyfault-incident" --warnings all examples/ESP32IncidentDiagnostics
       - name: Validate ZIP installation outside checkout
         run: |
           mkdir -p "$RUNNER_TEMP/package/TinyFault" "$RUNNER_TEMP/consumer"
@@ -91,6 +98,8 @@ jobs:
           arduino-cli lib install --zip-path "$RUNNER_TEMP/TinyFault.zip"
           cp -R examples/MinimalRecorder "$RUNNER_TEMP/consumer/"
           arduino-cli compile --fqbn esp32:esp32:esp32 --build-path "$RUNNER_TEMP/tinyfault-installed" --warnings all "$RUNNER_TEMP/consumer/MinimalRecorder"
+          cp -R examples/ESP32IncidentDiagnostics "$RUNNER_TEMP/consumer/"
+          arduino-cli compile --fqbn esp32:esp32:esp32 --build-path "$RUNNER_TEMP/tinyfault-incident-installed" --warnings all "$RUNNER_TEMP/consumer/ESP32IncidentDiagnostics"
       - name: Install Espressif QEMU
         run: |
           sudo apt-get update
@@ -105,3 +114,4 @@ jobs:
           test -n "$QEMU_BIN"
           python3 tests/qemu_smoke.py --qemu "$QEMU_BIN" --image "$RUNNER_TEMP/tinyfault-arduino/ESP32PersistentRecorder.ino.merged.bin"
           python3 tests/qemu_diagnostics.py --qemu "$QEMU_BIN" --image "$RUNNER_TEMP/tinyfault-diagnostics/ESP32Diagnostics.ino.merged.bin"
+          python3 tests/qemu_incident.py --qemu "$QEMU_BIN" --image "$RUNNER_TEMP/tinyfault-incident/ESP32IncidentDiagnostics.ino.merged.bin"

@@ -17,6 +17,9 @@ def boot(
     ready: bytes = b"Recorder ready.",
     software_reset: bool = False,
     export: bool = False,
+    ready_command: bytes | None = None,
+    command_marker: bytes | None = None,
+    reset_command: bytes = b"r",
 ) -> str:
     command = [
         str(qemu),
@@ -48,6 +51,7 @@ def boot(
     deadline = time.monotonic() + 30.0
     reset_sent = False
     export_sent = False
+    command_sent = False
     try:
         while time.monotonic() < deadline:
             if process.poll() is not None and lines.empty():
@@ -57,9 +61,14 @@ def boot(
             except queue.Empty:
                 continue
             captured.extend(line)
+            if ready_command is not None and not command_sent and ready in captured:
+                assert process.stdin is not None
+                process.stdin.write(ready_command)
+                process.stdin.flush()
+                command_sent = True
             if software_reset and not reset_sent and ready in captured:
                 assert process.stdin is not None
-                process.stdin.write(b"r")
+                process.stdin.write(reset_command)
                 process.stdin.flush()
                 reset_sent = True
             ready_count = captured.count(ready)
@@ -68,7 +77,11 @@ def boot(
                 process.stdin.write(b"XA1B2C3D4\n")
                 process.stdin.flush()
                 export_sent = True
-            if (b"TFX1 END" in captured if export else ready_count >= (2 if software_reset else 1)):
+            finished = (b"TFX1 END" in captured) if export else (
+                (command_marker in captured) if command_marker is not None else
+                ready_count >= (2 if software_reset else 1)
+            )
+            if finished:
                 break
         else:
             raise RuntimeError(
@@ -77,6 +90,7 @@ def boot(
         output = captured.decode("utf-8", errors="replace")
         if output.count(ready.decode("ascii")) < (2 if software_reset else 1) or (
             export and "TFX1 END" not in output
+        ) or (command_marker is not None and command_marker not in captured
         ):
             raise RuntimeError(f"Sketch did not finish setup:\n{output}")
         return output
