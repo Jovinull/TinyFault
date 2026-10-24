@@ -6,6 +6,7 @@
 // this region may be replaced by an explicit 'w' command.
 static TinyFaultEepromStorage storage(128, 4);
 static TinyFaultRecorder<4> recorder;
+static TinyFaultRecorder<4> ram_recorder;
 static bool ready;
 static uint8_t writes_this_boot;
 static char request[9];
@@ -37,6 +38,10 @@ void setup() {
   Serial.println(static_cast<unsigned long>(elapsed));
   if (status != TF_OK) {
     Serial.println(F("TF_ERROR eeprom_recovery"));
+    return;
+  }
+  if (ram_recorder.begin() != TF_OK) {
+    Serial.println(F("TF_ERROR ram_init"));
     return;
   }
   for (size_t index = 0; index < recorder.count(); ++index) {
@@ -83,6 +88,16 @@ void loop() {
     request_started = millis();
   } else if (command == 'x') {
     if (!tinyfaultExport(recorder, Serial)) Serial.println(F("TF_ERROR export"));
+  } else if (command == 'b') {
+    const uint32_t started = micros();
+    for (uint16_t i = 0; i < 10000u; ++i) {
+      if (ram_recorder.record(0xFA02u, i, 0) != TF_OK) {
+        Serial.println(F("TF_ERROR ram_record"));
+        return;
+      }
+    }
+    Serial.print(F("TF_RAM_RECORD iterations=10000 us="));
+    Serial.println(static_cast<unsigned long>(micros() - started));
   } else if (command == 'w') {
     if (writes_this_boot >= 4u) {
       Serial.println(F("TF_ERROR write_limit"));
