@@ -6,7 +6,7 @@ TinyFault does not automatically capture crashes or watchdog failures. A reset r
 
 ## Install
 
-Download this repository as a ZIP and use **Sketch > Include Library > Add .ZIP Library** in Arduino IDE, or place the extracted `TinyFault` folder in your sketchbook's `libraries` directory. The library is not yet published in Arduino Library Manager. Select an ESP32 board with the Arduino ESP32 core; the examples and adapter have been built with core 3.3.12. Do not upload an example to a board whose firmware you need to preserve.
+Download this repository as a ZIP and use **Sketch > Include Library > Add .ZIP Library** in Arduino IDE, or place the extracted `TinyFault` folder in your sketchbook's `libraries` directory. The library is not yet published in Arduino Library Manager. ESP32 examples use Arduino ESP32 core 3.3.12. AVR examples have been built with Arduino AVR Boards 1.8.8. Do not upload an example to a board whose firmware you need to preserve.
 
 Open [MinimalRecorder](examples/MinimalRecorder/MinimalRecorder.ino) for a RAM-only sketch. RAM events disappear on reset. The small instance-based API is:
 
@@ -61,6 +61,12 @@ The namespace must be 1–15 characters. The adapter uses keys `s0`, `s1`, ... a
 
 NVS commits each successful event write, so write frequency affects flash wear and latency. The adapter itself never formats NVS; Arduino ESP32 core 3.3.12 [initializes NVS and may erase its partition on specific initialization errors](https://github.com/espressif/arduino-esp32/blob/3.3.12/cores/esp32/esp32-hal-misc.c). Neither NVS nor the adapter promises zero heap use. The zero-heap guarantee applies to TinyFault's portable core. Do not store secrets in event values unless your application's storage and export path protect them.
 
+## Persist on Arduino AVR (build verified; physical test pending)
+
+[AVREepromRecorder](examples/AVREepromRecorder/AVREepromRecorder.ino) uses an explicit four-slot EEPROM region. Change its `TinyFaultEepromStorage storage(128, 4)` reservation to a region your application owns **before uploading or sending `w`**. It reads on boot without writing; `w` records one event, up to four times per boot, and `x` exports retained events. Press the board's RESET button to test recovery after a real reset. The tagged `X` request used by the Python decoder is also supported on boards with a serial connection. A four-slot reservation uses 96 EEPROM bytes; the example reserves bytes 128–223 and never clears EEPROM automatically.
+
+The adapter calls Arduino AVR `EEPROM.update()` for each of the 24 v1 bytes and reads the result back. It returns a storage error on an immediate mismatch, but the API cannot confirm lasting retention after power loss. An interrupted overwrite can destroy the older record in that slot; the core rejects an invalid CRC and keeps only the latest consecutive valid records. Reserve non-overlapping EEPROM regions yourself. EEPROM has finite write endurance, so record meaningful events rather than writing on every loop iteration. This adapter is currently **Build Verified** for Nano ATmega328P and Pro Trinket 5V/16 MHz; neither board has passed TinyFault physical validation. The Pro Trinket's built-in USB has no serial COM interface, so serial inspection requires an appropriate external adapter.
+
 ## Recover and export
 
 [ESP32Diagnostics](examples/ESP32Diagnostics/ESP32Diagnostics.ino) combines the NVS adapter, `tf_esp32_last_reset()`, event inspection, and controlled bench commands at 115200 baud. It uses the `tinyfault-m2` namespace so it can recover compatible records from the previous diagnostics firmware. Send `w` to store one explicit event (at most eight per boot), `r` for a software reset, or `x` to export the current retained events. No export happens automatically.
@@ -93,7 +99,7 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-CMake builds the C11 core and C++11 integration tests. Python 3 is required for the decoder test. For Arduino CLI 1.5.1 and ESP32 core 3.3.12, compile with `arduino-cli compile --fqbn esp32:esp32:esp32 --libraries <parent-of-TinyFault> examples/ESP32PersistentRecorder`. The CI workflow is configured to build the examples and validate a ZIP install outside the checkout. The optional [QEMU smoke test](tests/qemu_smoke.py) and [diagnostics test](tests/qemu_diagnostics.py) run ESP32 classic firmware on [Espressif QEMU 9.2.2](https://github.com/espressif/qemu/releases/tag/esp-develop-9.2.2-20260417); QEMU evidence is distinct from hardware evidence.
+CMake builds the C11 core and C++11 integration tests. Python 3 is required for the decoder test. With Arduino CLI 1.5.1, compile the ESP32 example using `arduino-cli compile --fqbn esp32:esp32:esp32 --libraries <parent-of-TinyFault> examples/ESP32PersistentRecorder`, or the Nano example using `arduino-cli compile --fqbn arduino:avr:nano:cpu=atmega328 --libraries <parent-of-TinyFault> examples/AVREepromRecorder`. The CI workflow is configured to build the examples and validate a ZIP install outside the checkout. The optional [QEMU smoke test](tests/qemu_smoke.py) and [diagnostics test](tests/qemu_diagnostics.py) run ESP32 classic firmware on [Espressif QEMU 9.2.2](https://github.com/espressif/qemu/releases/tag/esp-develop-9.2.2-20260417); QEMU evidence is distinct from hardware evidence.
 
 | Target | Evidence |
 | --- | --- |
@@ -101,7 +107,10 @@ CMake builds the C11 core and C++11 integration tests. Python 3 is required for 
 | ESP32 classic Arduino | Build Verified; NVS recovery and export tested in QEMU |
 | ESP32-S3 and ESP32-C3 Arduino | Build Verified only; execution untested |
 | TF-B01 ESP32 DevKit V1 | Hardware Verified with M3 firmware: compatible M2 records recovered unchanged, NVS recovery across five software resets, native reset reason 3/software, and tagged serial export decoded to JSON |
-| ESP-IDF standalone, RP2040/RP2350, AVR, STM32 | Not supported yet |
+| Arduino Nano ATmega328P and Pro Trinket 5V/16 MHz | Build Verified for RAM and EEPROM examples; physical validation pending |
+| ESP-IDF standalone, RP2040/RP2350, STM32 | Not supported yet |
+
+On Nano ATmega328P, four matched build probes measured flash/global SRAM of 1,494/188 bytes (serial baseline), 2,308/266 (RAM recorder), 3,708/271 (EEPROM recorder), and 5,816/367 (EEPROM with untagged TFX1 export). The full AVR example with tagged export measured 7,418/452 bytes, leaving 1,596 bytes after globals on a 2 KiB SRAM device. The recorder and EEPROM adapter objects occupy 78 and 5 bytes respectively. These build figures exclude stack use; a non-LTO stack report attributed 154 bytes to the exporter frame, plus its callees and library functions. Peak stack and physical EEPROM latency have not yet been measured.
 
 On TF-B01, the M3 firmware recovered four M2 records unchanged before writing. Three explicit NVS writes took 2,147, 5,238, and 71,412 µs; five recoveries of four records took 3,152–3,154 µs. Five batches of 10,000 RAM records took 5,127–5,128 µs each. Five complete serial capture and decode calls took 1,296.3–1,306.9 ms each, including serial port startup; this is not pure device export latency. With the same ESP32 core and board settings, the complete diagnostics sketch grew from M2's 279,640 flash/22,236 global bytes to M3's 280,964 flash/22,260 global bytes: +1,324 flash/+24 global bytes. This delta includes the new diagnostics and serial protocol, and does not isolate the NVS adapter. These observations from one board are not worst-case latency, wear, or endurance guarantees.
 
