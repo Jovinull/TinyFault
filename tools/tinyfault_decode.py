@@ -3,16 +3,17 @@
 import argparse
 import json
 import re
+import secrets
 import sys
 import time
 import zlib
 
-BEGIN = re.compile(r"TFX1 BEGIN count=(0|[1-9][0-9]*)\Z")
+BEGIN = re.compile(r"TFX1 BEGIN(?: req=([0-9A-F]{8}))? count=(0|[1-9][0-9]*)\Z")
 EVENT = re.compile(
     r"TFX1 EVENT seq=(0|[1-9][0-9]*) id=(0|[1-9][0-9]*) "
     r"value=(0|[1-9][0-9]*) ms=(0|[1-9][0-9]*)\Z"
 )
-END = re.compile(r"TFX1 END count=(0|[1-9][0-9]*) crc32=([0-9A-F]{8})\Z")
+END = re.compile(r"TFX1 END(?: req=([0-9A-F]{8}))? count=(0|[1-9][0-9]*) crc32=([0-9A-F]{8})\Z")
 MAX_EVENTS = 100000
 MAX_LINE = 96
 
@@ -30,7 +31,7 @@ def _number(raw: str, maximum: int, field: str) -> int:
     return value
 
 
-def parse(lines) -> list[dict[str, int]]:
+def parse(lines, expected_request: str | None = None) -> list[dict[str, int]]:
     iterator = iter(lines)
     try:
         first = next(iterator)
@@ -41,7 +42,10 @@ def parse(lines) -> list[dict[str, int]]:
     match = BEGIN.fullmatch(first.rstrip("\r\n"))
     if match is None:
         raise ExportError("invalid or unsupported export header")
-    expected = _number(match.group(1), MAX_EVENTS, "count")
+    request = match.group(1)
+    if expected_request is not None and request != expected_request:
+        raise ExportError("export belongs to another request")
+    expected = _number(match.group(2), MAX_EVENTS, "count")
     events: list[dict[str, int]] = []
     crc = 0
     for raw in iterator:
@@ -50,10 +54,12 @@ def parse(lines) -> list[dict[str, int]]:
         line = raw.rstrip("\r\n")
         end = END.fullmatch(line)
         if end is not None:
-            count = _number(end.group(1), MAX_EVENTS, "end count")
+            if end.group(1) != request:
+                raise ExportError("request identifier differs between BEGIN and END")
+            count = _number(end.group(2), MAX_EVENTS, "end count")
             if count != expected or len(events) != expected:
                 raise ExportError("event count does not match BEGIN and END")
-            if int(end.group(2), 16) != crc:
+            if int(end.group(3), 16) != crc:
                 raise ExportError("transfer CRC-32 mismatch")
             if next(iterator, None) is not None:
                 raise ExportError("unexpected data after TFX1 END")
@@ -84,22 +90,30 @@ def bounded_lines(source):
         yield raw
 
 
-def capture(port: str, timeout: float) -> list[str]:
+def capture(port: str, timeout: float) -> tuple[list[str], str]:
     try:
         import serial  # Optional; file decoding uses only the standard library.
     except ImportError as exc:
         raise ExportError("PySerial is required for --port") from exc
     lines: list[str] = []
-    with serial.Serial(port, 115200, timeout=1, rtscts=False, dsrdtr=False) as link:
+    request = secrets.token_hex(4).upper()
+    with serial.Serial(port, 115200, timeout=0.2, rtscts=False, dsrdtr=False) as link:
         link.dtr = False
         link.rts = False
-        time.sleep(2)
+        startup_deadline = time.monotonic() + min(timeout, 5.0)
+        while time.monotonic() < startup_deadline:
+            raw = link.read_until(b"\n", MAX_LINE + 1)
+            if len(raw) > MAX_LINE:
+                raise ExportError("serial startup line is too long")
+            if raw.startswith(b"TF_READY"):
+                break
         link.reset_input_buffer()
-        link.write(b"x")
+        command = b"X" + request.encode("ascii") + b"\n"
+        if link.write(command) != len(command):
+            raise ExportError("serial command write was incomplete")
         link.flush()
         deadline = time.monotonic() + timeout
         started = False
-        resent_after_ready = False
         while time.monotonic() < deadline:
             raw = link.read_until(b"\n", MAX_LINE + 1)
             if len(raw) > MAX_LINE:
@@ -108,11 +122,12 @@ def capture(port: str, timeout: float) -> list[str]:
             if line.startswith("TF_ERROR"):
                 raise ExportError(f"device reported: {line}")
             if not started:
-                if line.startswith("TF_READY") and not resent_after_ready:
-                    link.write(b"x")
-                    link.flush()
-                    resent_after_ready = True
+                if line.startswith("TF_READY"):
+                    raise ExportError("device became ready after request; retry capture")
                 if line.startswith("TFX"):
+                    header = BEGIN.fullmatch(line)
+                    if header is None or header.group(1) != request:
+                        raise ExportError("stale or invalid export response")
                     started = True
                 else:
                     continue
@@ -120,7 +135,7 @@ def capture(port: str, timeout: float) -> list[str]:
             if len(lines) > MAX_EVENTS + 2:
                 raise ExportError("serial export exceeds event limit")
             if line.startswith("TFX1 END"):
-                return lines
+                return lines, request
     raise ExportError("serial export timed out or ended without TFX1 END")
 
 
@@ -137,7 +152,8 @@ def main() -> int:
         parser.error("--timeout must be positive")
     try:
         if args.port:
-            events = parse(capture(args.port, args.timeout))
+            lines, request = capture(args.port, args.timeout)
+            events = parse(lines, expected_request=request)
         elif args.input == "-":
             events = parse(bounded_lines(sys.stdin))
         else:

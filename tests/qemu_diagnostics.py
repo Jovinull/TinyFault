@@ -43,7 +43,8 @@ def main() -> None:
     require(r"TF_BOOT native=3 reason=software chip=ESP32[^ ]* flash=\d+", restarted)
     if restarted.count("TF_READY") != 2:
         raise AssertionError(f"Expected two completed boots:\n{restarted}")
-    exported = parse(line for line in restarted.splitlines() if line.startswith("TFX1 "))
+    exported = parse((line for line in restarted.splitlines() if line.startswith("TFX1 ")),
+                     expected_request="A1B2C3D4")
     if len(exported) != 1 or exported[0]["sequence"] != 1 or exported[0]["id"] != 0xFF00:
         raise AssertionError(f"Export differs from recovered event:\n{restarted}")
     first_recovery = re.search(r"TF_RECOVERY status=0 count=0 us=(\d+)", first)

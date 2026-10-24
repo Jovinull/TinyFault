@@ -50,4 +50,11 @@ int main(int argc, char **argv) {
     failed.fail_after = 2;
     CHECK(!tinyfaultExport(recorder, failed));
     CHECK(failed.writes == 2);
+    Sink tagged;
+    CHECK(tinyfaultExport(recorder, tagged, "A1B2C3D4"));
+    CHECK(tagged.data.find("TFX1 BEGIN req=A1B2C3D4 count=2\n") == 0u);
+    CHECK(tagged.data.find("TFX1 END req=A1B2C3D4 count=2 crc32=") != std::string::npos);
+    Sink invalid;
+    CHECK(!tinyfaultExport(recorder, invalid, "not-hex!"));
+    CHECK(invalid.data.empty());
 }

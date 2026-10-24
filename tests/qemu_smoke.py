@@ -65,7 +65,7 @@ def boot(
             ready_count = captured.count(ready)
             if export and not export_sent and ready_count >= (2 if software_reset else 1):
                 assert process.stdin is not None
-                process.stdin.write(b"x")
+                process.stdin.write(b"XA1B2C3D4\n")
                 process.stdin.flush()
                 export_sent = True
             if (b"TFX1 END" in captured if export else ready_count >= (2 if software_reset else 1)):

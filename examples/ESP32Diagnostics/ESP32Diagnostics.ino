@@ -9,6 +9,10 @@ static const uint16_t kBootEvent = 0xFF00u;
 static const uint16_t kManualEvent = 0xFF01u;
 static uint8_t manual_writes;
 static bool ready;
+static char export_request[9];
+static uint8_t export_request_length;
+static uint32_t export_request_started;
+static bool receiving_export_request;
 
 void setup() {
   Serial.begin(115200);
@@ -68,8 +72,37 @@ void setup() {
 }
 
 void loop() {
+  if (receiving_export_request && millis() - export_request_started > 1000u) {
+    receiving_export_request = false;
+    Serial.println("TF_ERROR export_request_timeout");
+  }
   if (!ready || !Serial.available()) return;
   const char command = static_cast<char>(Serial.read());
+  if (receiving_export_request) {
+    if (export_request_length < 8) {
+      if (!((command >= '0' && command <= '9') || (command >= 'A' && command <= 'F'))) {
+        receiving_export_request = false;
+        Serial.println("TF_ERROR export_request_invalid");
+        return;
+      }
+      export_request[export_request_length++] = command;
+      return;
+    }
+    receiving_export_request = false;
+    if (command != '\n') {
+      Serial.println("TF_ERROR export_request_invalid");
+      return;
+    }
+    export_request[8] = '\0';
+    if (!tinyfaultExport(recorder, Serial, export_request)) Serial.println("TF_ERROR export");
+    return;
+  }
+  if (command == 'X') {
+    receiving_export_request = true;
+    export_request_length = 0;
+    export_request_started = millis();
+    return;
+  }
   if (command == 'r') {
     Serial.println("TF_COMMAND software_reset");
     Serial.flush();
