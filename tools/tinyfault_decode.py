@@ -142,7 +142,7 @@ def capture(port: str, timeout: float) -> tuple[list[str], str]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input", nargs="?", default="-", help="export text file, or - for stdin")
-    parser.add_argument("--port", help="request export from an ESP32 serial port (needs PySerial)")
+    parser.add_argument("--port", help="request export from a supported serial board (needs PySerial)")
     parser.add_argument("--timeout", type=float, default=20.0, help="serial timeout in seconds")
     parser.add_argument("--json", action="store_true", help="print JSON instead of a text table")
     args = parser.parse_args()
