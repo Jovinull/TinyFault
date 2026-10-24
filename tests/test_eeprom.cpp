@@ -107,18 +107,24 @@ static void testInterruptedOverwrite() {
         const tf_status result = recorder.record(7, 5, 5);
         CHECK(result == TF_OK || result == TF_STORAGE_ERROR);
         EEPROM.write_limit = 1024;
+        tf_event slot_event;
+        const bool slot_valid = tf_decode(EEPROM.bytes + 100 + TF_RECORD_SIZE,
+                                          TF_RECORD_SIZE, &slot_event) != 0;
+        CHECK(!slot_valid || slot_event.sequence == 1u || slot_event.sequence == 5u);
         TinyFaultRecorder<4> recovered;
         TinyFaultEepromStorage second(100, 4);
         CHECK(second.begin(recovered) == TF_OK);
-        uint32_t previous = 0;
+        const uint32_t first_sequence = slot_valid && slot_event.sequence == 1u ? 1u : 2u;
+        const uint32_t last_sequence = slot_valid && slot_event.sequence == 5u ? 5u : 4u;
+        CHECK(recovered.count() == last_sequence - first_sequence + 1u);
         for (size_t i = 0; i < recovered.count(); ++i) {
             tf_event event;
             CHECK(recovered.get(i, event));
-            CHECK(event.sequence > previous && event.sequence <= 5u);
+            CHECK(event.sequence == first_sequence + i);
             CHECK(event.value == event.sequence);
-            previous = event.sequence;
         }
-        CHECK(recovered.count() >= 3u);
+        if (result == TF_OK)
+            CHECK(slot_valid && slot_event.sequence == 5u);
         CHECK(!EEPROM.out_of_range);
     }
 }
