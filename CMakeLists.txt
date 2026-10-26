@@ -26,6 +26,24 @@ if(BUILD_TESTING)
     target_compile_options(tinyfault_reset_tests PRIVATE -Wall -Wextra -Wpedantic -Werror -Wconversion -Wshadow)
   endif()
   add_test(NAME tinyfault_reset_tests COMMAND tinyfault_reset_tests)
+  foreach(mode enabled disabled)
+    add_executable(tinyfault_coredump_${mode}_tests src/tf_esp32_coredump.c
+                   tests/test_esp32_coredump.c)
+    target_include_directories(tinyfault_coredump_${mode}_tests PRIVATE src tests/fakes)
+    target_compile_definitions(tinyfault_coredump_${mode}_tests PRIVATE ESP_PLATFORM)
+    if(mode STREQUAL "enabled")
+      target_compile_definitions(tinyfault_coredump_${mode}_tests PRIVATE
+                                 CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=1
+                                 CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF=1)
+    else()
+      target_compile_definitions(tinyfault_coredump_${mode}_tests PRIVATE TEST_DISABLED)
+    endif()
+    if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+      target_compile_options(tinyfault_coredump_${mode}_tests PRIVATE
+                             -Wall -Wextra -Wpedantic -Werror -Wconversion -Wshadow)
+    endif()
+    add_test(NAME tinyfault_coredump_${mode}_tests COMMAND tinyfault_coredump_${mode}_tests)
+  endforeach()
   add_executable(tinyfault_avr_reset_tests tests/test_avr_reset.c)
   target_include_directories(tinyfault_avr_reset_tests PRIVATE src)
   if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
@@ -64,6 +82,9 @@ if(BUILD_TESTING)
   add_test(NAME tinyfault_decode_tests COMMAND ${Python3_EXECUTABLE}
            ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_decode.py $<TARGET_FILE:tinyfault_export_tests>)
   set_tests_properties(tinyfault_decode_tests PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+  add_test(NAME tinyfault_correlate_tests COMMAND ${Python3_EXECUTABLE}
+           ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_correlate.py)
+  set_tests_properties(tinyfault_correlate_tests PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
   add_test(NAME tinyfault_hardware_avr_tests COMMAND ${Python3_EXECUTABLE}
            ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_hardware_avr.py)
   set_tests_properties(tinyfault_hardware_avr_tests PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
