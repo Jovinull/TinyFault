@@ -4,6 +4,14 @@
 #include "TinyFault.h"
 
 #include <stdio.h>
+#if defined(__AVR__)
+#include <avr/pgmspace.h>
+#define TINYFAULT_FORMAT snprintf_P
+#define TINYFAULT_LITERAL(text) PSTR(text)
+#else
+#define TINYFAULT_FORMAT snprintf
+#define TINYFAULT_LITERAL(text) text
+#endif
 
 namespace tinyfault_detail {
 inline bool validRequest(const char *request) {
@@ -40,19 +48,26 @@ bool tinyfaultExport(const TinyFaultRecorder<Capacity> &recorder, Sink &sink,
                      const char *request = nullptr) {
     if (!tinyfault_detail::validRequest(request))
         return false;
+    const uint32_t cursor = recorder.sequenceCursor();
+    const bool uncertain = recorder.storageUncertain();
+    const size_t count = recorder.count();
     char line[96];
-    int length = request ? snprintf(line, sizeof(line), "TFX1 BEGIN req=%s count=%lu\n", request,
-                                    static_cast<unsigned long>(recorder.count()))
-                         : snprintf(line, sizeof(line), "TFX1 BEGIN count=%lu\n",
-                                    static_cast<unsigned long>(recorder.count()));
+    int length = request ? TINYFAULT_FORMAT(line, sizeof(line), TINYFAULT_LITERAL("TFX1 BEGIN req=%s count=%lu\n"), request,
+                                    static_cast<unsigned long>(count))
+                         : TINYFAULT_FORMAT(line, sizeof(line), TINYFAULT_LITERAL("TFX1 BEGIN count=%lu\n"),
+                                    static_cast<unsigned long>(count));
     if (!tinyfault_detail::writeLine(sink, line, length))
         return false;
+    if (recorder.sequenceCursor() != cursor || recorder.storageUncertain() != uncertain)
+        return false;
     uint32_t crc = UINT32_MAX;
-    for (size_t index = 0; index < recorder.count(); ++index) {
+    for (size_t index = 0; index < count; ++index) {
+        if (recorder.sequenceCursor() != cursor || recorder.storageUncertain() != uncertain)
+            return false;
         tf_event event;
         if (!recorder.get(index, event))
             return false;
-        length = snprintf(line, sizeof(line), "TFX1 EVENT seq=%lu id=%u value=%lu ms=%lu\n",
+        length = TINYFAULT_FORMAT(line, sizeof(line), TINYFAULT_LITERAL("TFX1 EVENT seq=%lu id=%u value=%lu ms=%lu\n"),
                           static_cast<unsigned long>(event.sequence),
                           static_cast<unsigned>(event.id), static_cast<unsigned long>(event.value),
                           static_cast<unsigned long>(event.timestamp_ms));
@@ -61,14 +76,19 @@ bool tinyfaultExport(const TinyFaultRecorder<Capacity> &recorder, Sink &sink,
         crc = tinyfault_detail::crc32Update(crc, line, static_cast<size_t>(length));
         if (!tinyfault_detail::writeLine(sink, line, length))
             return false;
+        if (recorder.sequenceCursor() != cursor || recorder.storageUncertain() != uncertain)
+            return false;
     }
-    length = request ? snprintf(line, sizeof(line), "TFX1 END req=%s count=%lu crc32=%08lX\n",
-                                request, static_cast<unsigned long>(recorder.count()),
+    length = request ? TINYFAULT_FORMAT(line, sizeof(line), TINYFAULT_LITERAL("TFX1 END req=%s count=%lu crc32=%08lX\n"),
+                                request, static_cast<unsigned long>(count),
                                 static_cast<unsigned long>(~crc))
-                     : snprintf(line, sizeof(line), "TFX1 END count=%lu crc32=%08lX\n",
-                                static_cast<unsigned long>(recorder.count()),
+                     : TINYFAULT_FORMAT(line, sizeof(line), TINYFAULT_LITERAL("TFX1 END count=%lu crc32=%08lX\n"),
+                                static_cast<unsigned long>(count),
                                 static_cast<unsigned long>(~crc));
     return tinyfault_detail::writeLine(sink, line, length);
 }
+
+#undef TINYFAULT_FORMAT
+#undef TINYFAULT_LITERAL
 
 #endif

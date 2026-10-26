@@ -23,6 +23,24 @@ struct Sink {
     }
 };
 
+struct MutatingSink {
+    TinyFaultRecorder<2> *recorder;
+    const char *trigger;
+    bool mutated = false;
+    std::string data;
+    MutatingSink(TinyFaultRecorder<2> *target, const char *match)
+        : recorder(target), trigger(match) {}
+    size_t write(const uint8_t *bytes, size_t length) {
+        const std::string line(reinterpret_cast<const char *>(bytes), length);
+        data += line;
+        if (!mutated && line.find(trigger) == 0u) {
+            mutated = true;
+            CHECK(recorder->record(99u, 99u, 99u) == TF_OK);
+        }
+        return length;
+    }
+};
+
 int main(int argc, char **argv) {
     TinyFaultRecorder<2> recorder;
     CHECK(recorder.begin() == TF_OK);
@@ -79,4 +97,13 @@ int main(int argc, char **argv) {
     const TinyFaultIncidentMetadata false_claim = {"avr", "external", 2, false};
     CHECK(!tinyfaultExportIncident(recorder, bad_meta, false_claim));
     CHECK(bad_meta.data.empty());
+
+    MutatingSink during_events{&recorder, "TFX1 EVENT"};
+    CHECK(!tinyfaultExport(recorder, during_events));
+    CHECK(during_events.mutated);
+    CHECK(during_events.data.find("TFX1 END") == std::string::npos);
+    MutatingSink during_metadata{&recorder, "TFI1 META"};
+    CHECK(!tinyfaultExportIncident(recorder, during_metadata, meta));
+    CHECK(during_metadata.mutated);
+    CHECK(during_metadata.data.find("TFX1 BEGIN") == std::string::npos);
 }
