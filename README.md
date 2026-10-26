@@ -28,6 +28,8 @@ void loop() {}
 
 Check the `tf_status` result of `begin()` and `record()` in application code. `get(0, event)` returns the oldest retained event. A full recorder keeps the most recent events; `dropped()` counts overwritten RAM events and failed writes in the current session. A recorder cannot be copied or moved because its C state points into its own fixed buffer.
 
+After recovery, `hasRecoveryGap()` reports a missing or invalid record inside the scanned sequence window; `hasUnusableSlots()` reports a present slot that could not be used as a v1 record. Neither flag identifies the cause or proves that earlier history never existed. A failed write sets `storageUncertain()`: the media may have changed even though the recorder did not advance. Reinitialize the recorder from storage before treating its retained events as a durable incident report. `TF_REENTRANT_CALL` rejects a storage callback that calls `record()` on the same recorder. This does not make the API thread-safe or safe in interrupts.
+
 ## Persist on ESP32
 
 [ESP32PersistentRecorder](examples/ESP32PersistentRecorder/ESP32PersistentRecorder.ino) uses the library's NVS adapter. Applications no longer need to copy NVS callbacks:
@@ -132,5 +134,7 @@ On TF-B01, the M3 firmware recovered four M2 records unchanged before writing. T
 The M5 firmware on TF-B01 used two explicit NVS checkpoints, taking 2,197 and 1,209 µs. Three recoveries of two events took 1,994–1,995 µs; five batches of 10,000 RAM records took 5,228–5,260 µs each. Two device-side serial exports took 11,292 and 11,551 µs. A controlled software reset produced native reason `3/software`; the recovered tuples were `(sequence, ID, value, boot-relative ms)` = `(1, 4097, 1, 1039)` and `(2, 4098, 3, 1055)`. TFI1 and TFX1 CRCs and request IDs were independently checked, and the local JSON matched both tuples. The full M5 sketch uses 281,428 flash bytes and 22,388 global bytes, compared with 280,932/22,260 for a same-settings M3 example rebuilt with the same core: +496/+128 bytes for the complete sketches, not isolated library overhead. Before the first M5 checkpoint, a full NVS read was byte-identical to its pre-M5 image; the earlier seven v1 records were still byte-identical afterward. These small samples are not worst-case latency, stack, wear, or endurance measurements.
 
 The on-media v1 format is experimental in 0.1.0: 24 little-endian bytes containing magic `0x5446`, version, length, sequence, ID, reserved bytes, value, timestamp, and CRC-32/ISO-HDLC. A valid unknown version blocks recovery with `TF_UNSUPPORTED_FORMAT`. Changing recorder capacity can lose history. A partial overwrite can remove an older event; a backend that reports failure after commit may leave an event recoverable after reboot. The recorder is not safe for simultaneous access from multiple tasks or interrupts. Sequence numbers stop at `UINT32_MAX`.
+
+CRC detects accidental corruption; it does not authenticate events. `count() == 0` is not proof that the device never recorded anything. The M6 AVR build reduces formatting strings in global SRAM, but this firmware has only been **Build Verified**; the measured M5 hardware figures above remain historical measurements of different firmware. Peak stack and worst-case NVS/EEPROM latency are still unknown.
 
 Licensed under Apache-2.0; see [LICENSE](LICENSE).
