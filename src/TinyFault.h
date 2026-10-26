@@ -21,7 +21,11 @@ template <size_t Capacity> class TinyFaultRecorder {
     }
     size_t count() const { return recorder_.count; }
     uint32_t dropped() const { return recorder_.dropped; }
+    uint32_t sequenceCursor() const { return recorder_.next_sequence; }
     bool get(size_t index, tf_event &event) const { return tf_get(&recorder_, index, &event) != 0; }
+    bool hasRecoveryGap() const { return tf_recorder_has_recovery_gap(&recorder_) != 0; }
+    bool hasUnusableSlots() const { return tf_recorder_has_unusable_slots(&recorder_) != 0; }
+    bool storageUncertain() const { return tf_recorder_storage_uncertain(&recorder_) != 0; }
 };
 
 #endif

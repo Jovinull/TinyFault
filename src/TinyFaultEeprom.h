@@ -28,9 +28,11 @@ class TinyFaultEepromStorage {
         if (!self->bound_ || !self->valid() || slot >= self->slots_)
             return -1;
         const size_t offset = self->address(slot);
+        bool erased = true;
         for (size_t i = 0; i < TF_RECORD_SIZE; ++i)
-            out[i] = EEPROM.read(static_cast<int>(offset + i));
-        return 1;
+            if ((out[i] = EEPROM.read(static_cast<int>(offset + i))) != 0xffu)
+                erased = false;
+        return erased ? 0 : 1;
     }
 
     static int writeSlot(void *context, size_t slot, const uint8_t data[TF_RECORD_SIZE]) {

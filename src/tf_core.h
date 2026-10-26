@@ -16,7 +16,8 @@ typedef enum {
     TF_INVALID_ARGUMENT,
     TF_STORAGE_ERROR,
     TF_SEQUENCE_EXHAUSTED,
-    TF_UNSUPPORTED_FORMAT
+    TF_UNSUPPORTED_FORMAT,
+    TF_REENTRANT_CALL
 } tf_status;
 
 typedef struct {
@@ -44,12 +45,22 @@ typedef struct {
     uint32_t next_sequence;
     uint32_t dropped;
     tf_storage storage;
+    uint8_t recovery_gap;
+    uint8_t storage_uncertain;
+    uint8_t in_callback;
+    uint8_t unusable_slots;
 } tf_recorder;
 
 tf_status tf_recorder_init(tf_recorder *recorder, tf_event *buffer, size_t capacity,
                            const tf_storage *storage);
 tf_status tf_record(tf_recorder *recorder, uint16_t id, uint32_t value, uint32_t timestamp_ms);
 int tf_get(const tf_recorder *recorder, size_t index, tf_event *out);
+/* A missing/invalid record was observed inside the scanned sequence window. */
+int tf_recorder_has_recovery_gap(const tf_recorder *recorder);
+/* At least one present slot could not be used as a v1 record. */
+int tf_recorder_has_unusable_slots(const tf_recorder *recorder);
+/* A write failed; the media may differ from the recorder's RAM state until reinit. */
+int tf_recorder_storage_uncertain(const tf_recorder *recorder);
 void tf_encode(const tf_event *event, uint8_t out[TF_RECORD_SIZE]);
 int tf_decode(const uint8_t *data, size_t length, tf_event *out);
 

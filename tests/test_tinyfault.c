@@ -56,6 +56,55 @@ static int write_slot(void *context, size_t slot, const uint8_t data[TF_RECORD_S
     return 1;
 }
 
+typedef struct {
+    memory_store media;
+    tf_recorder *recorder;
+    tf_status nested_read_status;
+    tf_status nested_write_status;
+    int attempted_read;
+    int attempted_write;
+} reentrant_store;
+
+static void expect(const tf_recorder *rec, size_t index, uint32_t sequence, uint16_t id);
+
+static int reentrant_read(void *context, size_t slot, uint8_t out[TF_RECORD_SIZE]) {
+    reentrant_store *store = (reentrant_store *)context;
+    if (!store->attempted_read) {
+        store->attempted_read = 1;
+        store->nested_read_status = tf_record(store->recorder, 99u, 0u, 0u);
+    }
+    return read_slot(&store->media, slot, out);
+}
+
+static int reentrant_write(void *context, size_t slot, const uint8_t data[TF_RECORD_SIZE]) {
+    reentrant_store *store = (reentrant_store *)context;
+    if (!store->attempted_write) {
+        store->attempted_write = 1;
+        store->nested_write_status = tf_record(store->recorder, 99u, 0u, 0u);
+    }
+    return write_slot(&store->media, slot, data);
+}
+
+static void test_reentrant_callbacks(void) {
+    reentrant_store media = {0};
+    tf_event buffer[CAP];
+    tf_recorder recorder;
+    media.recorder = &recorder;
+    const tf_storage storage = {&media, reentrant_read, reentrant_write};
+    CHECK(tf_recorder_init(&recorder, buffer, CAP, &storage) == TF_OK);
+    CHECK(media.nested_read_status == TF_REENTRANT_CALL);
+    CHECK(recorder.count == 0u && recorder.next_sequence == 1u);
+    CHECK(tf_record(&recorder, 7u, 8u, 9u) == TF_OK);
+    CHECK(media.nested_write_status == TF_REENTRANT_CALL);
+    CHECK(recorder.count == 1u && recorder.next_sequence == 2u);
+    expect(&recorder, 0u, 1u, 7u);
+    tf_event after_buffer[CAP];
+    tf_recorder recovered;
+    CHECK(tf_recorder_init(&recovered, after_buffer, CAP, &storage) == TF_OK);
+    CHECK(recovered.count == 1u);
+    expect(&recovered, 0u, 1u, 7u);
+}
+
 static void expect(const tf_recorder *rec, size_t index, uint32_t sequence, uint16_t id) {
     tf_event event;
     CHECK(tf_get(rec, index, &event));
@@ -137,6 +186,38 @@ static void test_codec(void) {
     CHECK(overlapping.event.value == input.value);
 }
 
+static void test_codec_mutations(void) {
+    const tf_event original = {UINT32_C(0x10203040), UINT16_C(0x1234),
+                               UINT32_C(0x55667788), UINT32_C(0x99aabbcc)};
+    uint8_t valid[TF_RECORD_SIZE];
+    uint8_t mutated[TF_RECORD_SIZE];
+    tf_encode(&original, valid);
+    for (size_t offset = 0; offset < TF_RECORD_SIZE; ++offset) {
+        for (unsigned bit = 0; bit < 8u; ++bit) {
+            memcpy(mutated, valid, sizeof(mutated));
+            mutated[offset] ^= (uint8_t)(1u << bit);
+            tf_event decoded;
+            CHECK(!tf_decode(mutated, sizeof(mutated), &decoded));
+        }
+    }
+    /* Fixed-seed parser corpus: accepted inputs must be canonical v1 records. */
+    uint32_t state = UINT32_C(0x5eed1234);
+    for (unsigned sample = 0; sample < 4096u; ++sample) {
+        for (size_t offset = 0; offset < TF_RECORD_SIZE; ++offset) {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            mutated[offset] = (uint8_t)state;
+        }
+        tf_event decoded;
+        if (tf_decode(mutated, sizeof(mutated), &decoded)) {
+            uint8_t roundtrip[TF_RECORD_SIZE];
+            tf_encode(&decoded, roundtrip);
+            CHECK(memcmp(mutated, roundtrip, TF_RECORD_SIZE) == 0);
+        }
+    }
+}
+
 static void test_recovery(void) {
     memory_store mem = {0};
     tf_storage storage = {&mem, read_slot, write_slot};
@@ -149,11 +230,15 @@ static void test_recovery(void) {
     memset(first, 0, sizeof(first));
     CHECK(tf_recorder_init(&after, rebuilt, CAP, &storage) == TF_OK);
     CHECK(after.count == CAP);
+    CHECK(!tf_recorder_has_recovery_gap(&after));
+    CHECK(!tf_recorder_storage_uncertain(&after));
     for (size_t i = 0; i < CAP; ++i)
         expect(&after, i, (uint32_t)i + 3u, (uint16_t)i + 3u);
     mem.fail_read_slot = 3;
     CHECK(tf_recorder_init(&after, rebuilt, CAP, &storage) == TF_OK);
     CHECK(after.count == 3u);
+    CHECK(tf_recorder_has_recovery_gap(&after));
+    CHECK(!tf_recorder_has_unusable_slots(&after));
     mem.fail_read_slot = 0;
     mem.error_read_slot = 1;
     CHECK(tf_recorder_init(&after, rebuilt, CAP, &storage) == TF_STORAGE_ERROR);
@@ -170,15 +255,19 @@ static void test_recovery(void) {
     mem.slots[6u % CAP][12] ^= 0x40u;
     CHECK(tf_recorder_init(&after, rebuilt, CAP, &storage) == TF_OK);
     CHECK(after.count == 3u);
+    CHECK(tf_recorder_has_recovery_gap(&after));
+    CHECK(tf_recorder_has_unusable_slots(&after));
     expect(&after, 2u, 5u, 5u);
     mem.fail_write = 1;
     CHECK(tf_record(&after, 7u, 0u, 0u) == TF_STORAGE_ERROR);
     CHECK(after.count == 3u && after.dropped == 1u);
+    CHECK(tf_recorder_storage_uncertain(&after));
     mem.fail_write = 0;
     mem.partial_write = 1;
     CHECK(tf_record(&after, 7u, 0u, 0u) == TF_STORAGE_ERROR);
     CHECK(tf_recorder_init(&after, rebuilt, CAP, &storage) == TF_OK);
     CHECK(after.count == 3u);
+    CHECK(!tf_recorder_storage_uncertain(&after));
     expect(&after, 0u, 3u, 3u);
     mem.partial_write = 0;
     CHECK(tf_record(&after, 7u, 0u, 0u) == TF_OK);
@@ -226,8 +315,10 @@ static void test_ambiguous_write(void) {
     mem.fail_after_write = 1;
     CHECK(tf_record(&rec, 50u, 1u, 2u) == TF_STORAGE_ERROR);
     CHECK(rec.count == 0u);
+    CHECK(tf_recorder_storage_uncertain(&rec));
     CHECK(tf_recorder_init(&rec, buffer, CAP, &storage) == TF_OK);
     CHECK(rec.count == 1u);
+    CHECK(!tf_recorder_storage_uncertain(&rec));
     expect(&rec, 0u, 1u, 50u);
 }
 
@@ -257,6 +348,8 @@ static void test_capacity_change(void) {
         CHECK(tf_record(&rec, id, 0u, 0u) == TF_OK);
     CHECK(tf_recorder_init(&rec, buffer, 2u, &storage) == TF_OK);
     CHECK(rec.count == 1u);
+    CHECK(tf_recorder_has_recovery_gap(&rec));
+    CHECK(!tf_recorder_has_unusable_slots(&rec));
     expect(&rec, 0u, 4u, 4u);
     CHECK(tf_record(&rec, 5u, 0u, 0u) == TF_OK);
     CHECK(tf_recorder_init(&rec, buffer, 2u, &storage) == TF_OK);
@@ -268,6 +361,8 @@ static void test_capacity_change(void) {
 int main(void) {
     test_ram();
     test_codec();
+    test_codec_mutations();
+    test_reentrant_callbacks();
     test_recovery();
     test_unsupported_format();
     test_ambiguous_write();

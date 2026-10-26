@@ -269,6 +269,57 @@ static void testDeferredNamespace() {
     CHECK(recovered.record(2, 3, 4) == TF_OK && fake.namespace_creations == 1u);
     reopened.close();
     CHECK(recovered.record(3, 4, 5) == TF_STORAGE_ERROR);
+    CHECK(recovered.storageUncertain());
+}
+
+static void testFailureStagesWithExistingHistory() {
+    resetFake();
+    const tf_event previous = {1u, 9u, 10u, 11u};
+    uint8_t encoded[TF_RECORD_SIZE];
+    tf_encode(&previous, encoded);
+    fake.committed["history"]["s1"] = std::vector<uint8_t>(encoded, encoded + TF_RECORD_SIZE);
+    const auto old_record = fake.committed["history"]["s1"];
+
+    TinyFaultNvsStorage storage;
+    CHECK(storage.openDeferred("history") == ESP_OK);
+    TinyFaultRecorder<4> recorder;
+    CHECK(storage.begin(recorder) == TF_OK && recorder.count() == 1u);
+    CHECK(fake.namespace_creations == 0u);
+    fake.read_error = ESP_ERR_NVS_TEST_IO;
+    TinyFaultRecorder<4> failed_read;
+    CHECK(storage.begin(failed_read) == TF_STORAGE_ERROR);
+    CHECK(storage.lastError() == ESP_ERR_NVS_TEST_IO);
+    fake.read_error = ESP_OK;
+
+    fake.open_error = ESP_ERR_NVS_TEST_IO;
+    CHECK(recorder.record(20, 30, 40) == TF_STORAGE_ERROR);
+    CHECK(storage.lastError() == ESP_ERR_NVS_TEST_IO);
+    CHECK(recorder.storageUncertain() && recorder.count() == 1u);
+    CHECK(fake.committed["history"]["s1"] == old_record);
+    fake.open_error = ESP_OK;
+    fake.write_error = ESP_ERR_NVS_TEST_IO;
+    CHECK(recorder.record(20, 30, 40) == TF_STORAGE_ERROR);
+    CHECK(storage.lastError() == ESP_ERR_NVS_TEST_IO);
+    CHECK(fake.committed["history"].count("s2") == 0u);
+    fake.write_error = ESP_OK;
+    fake.commit_error = ESP_ERR_NVS_TEST_IO;
+    CHECK(recorder.record(20, 30, 40) == TF_STORAGE_ERROR);
+    CHECK(fake.committed["history"].count("s2") == 0u);
+    fake.apply_before_commit_error = true;
+    CHECK(recorder.record(20, 30, 40) == TF_STORAGE_ERROR);
+    CHECK(recorder.count() == 1u && recorder.storageUncertain());
+    CHECK(fake.committed["history"]["s1"] == old_record);
+    CHECK(fake.committed["history"].count("s2") == 1u);
+
+    TinyFaultNvsStorage reopened;
+    CHECK(reopened.openDeferred("history") == ESP_OK);
+    TinyFaultRecorder<4> recovered;
+    CHECK(reopened.begin(recovered) == TF_OK && recovered.count() == 2u);
+    CHECK(!recovered.storageUncertain() && !recovered.hasRecoveryGap());
+    tf_event event;
+    CHECK(recovered.get(0, event) && event.sequence == 1u && event.value == 10u);
+    CHECK(recovered.get(1, event) && event.sequence == 2u && event.value == 30u);
+    CHECK(fake.namespace_creations == 0u);
 }
 
 int main() {
@@ -278,4 +329,5 @@ int main() {
     testFailures();
     testCallbackLease();
     testDeferredNamespace();
+    testFailureStagesWithExistingHistory();
 }
