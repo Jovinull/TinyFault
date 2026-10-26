@@ -1,6 +1,7 @@
 #include <TinyFault.h>
 #include <TinyFaultIncident.h>
 #include <TinyFaultNvs.h>
+#include <tf_esp32_coredump.h>
 #include <tf_esp32_reset.h>
 
 // Application-owned IDs. A checkpoint is a fact, not proof that an operation ended.
@@ -122,6 +123,23 @@ void loop() {
     Serial.println("TF_COMMAND software_reset");
     Serial.flush();
     ESP.restart();
+  } else if (command == 'q') {
+    // Explicit, read-only query. Never transmits task stacks or raw dump bytes.
+    const tf_esp32_coredump_info dump = tf_esp32_coredump_inspect();
+    Serial.printf("TFN1 state=%s error=%d size=%u summary=%d summary_error=%d "
+                  "elf_prefix=%d sha=%s pc=%08lX\n",
+                  tf_esp32_coredump_state_name(dump.state), dump.native_error,
+                  static_cast<unsigned>(dump.image_size), dump.summary_available,
+                  dump.summary_error, static_cast<int>(dump.elf_relation),
+                  dump.dump_elf_sha_prefix[0] ? dump.dump_elf_sha_prefix : "unknown",
+                  static_cast<unsigned long>(dump.exception_pc));
+#if defined(TINYFAULT_QEMU_CRASH_TEST)
+  } else if (command == '!') {
+    // Only a separately built emulator test image contains this branch.
+    Serial.println("TF_TEST_CRASH");
+    Serial.flush();
+    abort();
+#endif
   } else if (command == 'a' || command == 'c' || command == 'd') {
     if (writes_this_boot >= 3u) {
       Serial.println("TF_ERROR write_limit");

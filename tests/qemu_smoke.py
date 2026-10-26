@@ -20,6 +20,7 @@ def boot(
     ready_command: bytes | None = None,
     command_marker: bytes | None = None,
     reset_command: bytes = b"r",
+    command_delay_s: float = 0.0,
 ) -> str:
     command = [
         str(qemu),
@@ -52,8 +53,15 @@ def boot(
     reset_sent = False
     export_sent = False
     command_sent = False
+    ready_since: float | None = None
     try:
         while time.monotonic() < deadline:
+            if (ready_command is not None and not command_sent and ready_since is not None
+                    and time.monotonic() - ready_since >= command_delay_s):
+                assert process.stdin is not None
+                process.stdin.write(ready_command)
+                process.stdin.flush()
+                command_sent = True
             if process.poll() is not None and lines.empty():
                 break
             try:
@@ -61,11 +69,8 @@ def boot(
             except queue.Empty:
                 continue
             captured.extend(line)
-            if ready_command is not None and not command_sent and ready in captured:
-                assert process.stdin is not None
-                process.stdin.write(ready_command)
-                process.stdin.flush()
-                command_sent = True
+            if ready_since is None and ready in captured:
+                ready_since = time.monotonic()
             if software_reset and not reset_sent and ready in captured:
                 assert process.stdin is not None
                 process.stdin.write(reset_command)

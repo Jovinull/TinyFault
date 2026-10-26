@@ -89,6 +89,8 @@ jobs:
         run: arduino-cli compile --fqbn esp32:esp32:esp32:FlashMode=dio,FlashFreq=40 --libraries "$GITHUB_WORKSPACE/.." --build-path "$RUNNER_TEMP/tinyfault-diagnostics" --warnings all examples/ESP32Diagnostics
       - name: Compile incident example
         run: arduino-cli compile --fqbn esp32:esp32:esp32:FlashMode=dio,FlashFreq=40 --libraries "$GITHUB_WORKSPACE/.." --build-path "$RUNNER_TEMP/tinyfault-incident" --warnings all examples/ESP32IncidentDiagnostics
+      - name: Compile emulator crash probe
+        run: arduino-cli compile --fqbn esp32:esp32:esp32:FlashMode=dio,FlashFreq=40 --libraries "$GITHUB_WORKSPACE/.." --build-path "$RUNNER_TEMP/tinyfault-qemu-crash" --build-property compiler.cpp.extra_flags=-DTINYFAULT_QEMU_CRASH_TEST --warnings all examples/ESP32IncidentDiagnostics
       - name: Validate ZIP installation outside checkout
         run: |
           mkdir -p "$RUNNER_TEMP/package/TinyFault" "$RUNNER_TEMP/consumer"
@@ -115,3 +117,4 @@ jobs:
           python3 tests/qemu_smoke.py --qemu "$QEMU_BIN" --image "$RUNNER_TEMP/tinyfault-arduino/ESP32PersistentRecorder.ino.merged.bin"
           python3 tests/qemu_diagnostics.py --qemu "$QEMU_BIN" --image "$RUNNER_TEMP/tinyfault-diagnostics/ESP32Diagnostics.ino.merged.bin"
           python3 tests/qemu_incident.py --qemu "$QEMU_BIN" --image "$RUNNER_TEMP/tinyfault-incident/ESP32IncidentDiagnostics.ino.merged.bin"
+          python3 tests/qemu_coredump.py --qemu "$QEMU_BIN" --image "$RUNNER_TEMP/tinyfault-qemu-crash/ESP32IncidentDiagnostics.ino.merged.bin"
